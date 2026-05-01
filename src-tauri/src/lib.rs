@@ -1,3 +1,4 @@
+mod account;
 mod asr;
 mod audio;
 mod config;
@@ -28,6 +29,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(app_state.clone())
         .invoke_handler(tauri::generate_handler![
             cmd_get_config,
@@ -36,6 +38,12 @@ pub fn run() {
             cmd_force_record_start,
             cmd_force_record_stop,
             cmd_open_main_window,
+            cmd_account_login_start,
+            cmd_account_logout,
+            cmd_account_get_state,
+            cmd_account_resolve_conflict,
+            cmd_account_get_devices,
+            cmd_account_unbind_device,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -50,6 +58,28 @@ pub fn run() {
 
             // Hotkey listener (low-level keyboard hook on Windows)
             hotkey::spawn_hook_thread(app_state.clone());
+
+            // Account integration — build, attach, kick bootstrap.
+            let account = account::Account::new(handle.clone(), app_state.clone());
+            *app_state.account.write() = Some(account.clone());
+            let acc_for_boot = account.clone();
+            tauri::async_runtime::spawn(async move {
+                acc_for_boot.bootstrap().await;
+            });
+
+            // Deep-link callback — forwarded to Account.
+            use tauri_plugin_deep_link::DeepLinkExt;
+            let acc_for_deeplink = account.clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    let url_str = url.to_string();
+                    log::info!("deep-link open_url: {url_str}");
+                    let acc = acc_for_deeplink.clone();
+                    tauri::async_runtime::spawn(async move {
+                        acc.handle_auth_callback(&url_str).await;
+                    });
+                }
+            });
 
             // Pipeline event pump → forward to JS + drive pill
             let pump_state = app_state.clone();
@@ -89,7 +119,14 @@ fn cmd_save_config(
     state: tauri::State<'_, Arc<AppState>>,
     new_config: config::AppConfig,
 ) -> Result<(), String> {
-    state.replace_config(new_config).map_err(|e| e.to_string())
+    state.replace_config(new_config).map_err(|e| e.to_string())?;
+    // Notify the cloud-sync engine — it'll debounce 3s, then PUT.
+    if let Some(acc) = state.account.read().clone() {
+        tauri::async_runtime::spawn(async move {
+            acc.on_settings_changed().await;
+        });
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -124,4 +161,68 @@ fn cmd_open_main_window(handle: tauri::AppHandle) -> Result<(), String> {
         let _ = w.set_focus();
     }
     Ok(())
+}
+
+// ---------- Account commands ----------
+
+fn account_handle(state: &Arc<AppState>) -> Result<account::Account, String> {
+    state
+        .account
+        .read()
+        .clone()
+        .ok_or_else(|| "account not yet ready".to_string())
+}
+
+#[tauri::command]
+async fn cmd_account_login_start(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    let acc = account_handle(&state)?;
+    acc.start_login().await
+}
+
+#[tauri::command]
+async fn cmd_account_logout(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    let acc = account_handle(&state)?;
+    acc.logout().await;
+    Ok(())
+}
+
+#[tauri::command]
+fn cmd_account_get_state(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<account::AccountSnapshot, String> {
+    let acc = account_handle(&state)?;
+    Ok(acc.snapshot())
+}
+
+#[tauri::command]
+async fn cmd_account_resolve_conflict(
+    state: tauri::State<'_, Arc<AppState>>,
+    action: String,
+) -> Result<(), String> {
+    let acc = account_handle(&state)?;
+    let resolved = match action.as_str() {
+        "keep_local" => account::ResolveAction::KeepLocal,
+        "use_cloud" => account::ResolveAction::UseCloud,
+        "merge" => account::ResolveAction::Merge,
+        other => return Err(format!("unknown action: {other}")),
+    };
+    acc.resolve_conflict(resolved).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn cmd_account_get_devices(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<account::auth::DeviceInfo>, String> {
+    let acc = account_handle(&state)?;
+    acc.list_devices().await
+}
+
+#[tauri::command]
+async fn cmd_account_unbind_device(
+    state: tauri::State<'_, Arc<AppState>>,
+    device_id: i64,
+) -> Result<(), String> {
+    let acc = account_handle(&state)?;
+    acc.unbind_device(device_id).await
 }

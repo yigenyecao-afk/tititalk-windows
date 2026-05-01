@@ -7,8 +7,10 @@ import {
   restart,
   type UpdateStatus,
 } from "./lib/updater";
+import AccountSection from "./components/AccountSection";
+import ConflictDialog from "./components/ConflictDialog";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 type Tab = "home" | "settings" | "history" | "about";
 
@@ -43,6 +45,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <UpdateBanner status={update} setStatus={setUpdate} />
+      <ConflictDialog />
       <div className="flex-1 flex">
       <aside className="w-56 shrink-0 border-r border-ink-200 bg-white">
         <div className="px-5 pt-5 pb-3">
@@ -297,6 +300,10 @@ function SettingsPane({
         />
       </Section>
 
+      <Section title="账号（tititalk.com）">
+        <AccountSection />
+      </Section>
+
       <Section title="润色（Stylist · 转写后再走一发 LLM 调通顺）">
         <Field label="启用润色">
           <input
@@ -411,7 +418,7 @@ function AboutPane() {
   return (
     <div className="max-w-2xl space-y-3 text-sm text-ink-700">
       <h1 className="text-2xl font-semibold text-ink-900">关于</h1>
-      <p>TiTiTalk Windows v{VERSION} — 跨平台语音输入法 Windows 端首版。</p>
+      <p>TiTiTalk Windows v{VERSION} — 跨平台语音输入法 Windows 端。</p>
       <p>
         Mac 端已上线 v2.10.12（35K LOC SwiftUI），Windows 端基于 Tauri 2 + Rust 重写底层
         音频/热键/插入，UI 与 Mac 端共享设计语言。
