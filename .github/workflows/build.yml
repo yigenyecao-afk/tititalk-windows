@@ -11,6 +11,11 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      # softprops/action-gh-release@v2 需要写 release。GITHUB_TOKEN 默认从
+      # 2023+ 起为 read-only，必须显式开。`contents: write` 同时盖了 tag
+      # push、release create、release upload assets 三件事，不必再细分。
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
