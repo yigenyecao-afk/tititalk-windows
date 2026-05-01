@@ -40,7 +40,7 @@ LOCAL_UPDATE_JSON="$LOCAL_DIR/$UPDATE_JSON_NAME"
 
 # 1. 拿 .exe —— 优先 local 缓存，没有就从 GH Release 下
 if [[ ! -f "$LOCAL_EXE" ]]; then
-    echo "==> 本地无 $EXE_NAME，从 GitHub Release v$VERSION 拉…"
+    echo "==> 本地无 ${EXE_NAME}，从 GitHub Release v${VERSION} 拉…"
     mkdir -p "$LOCAL_DIR"
     if ! gh release download "v$VERSION" \
         --repo yigenyecao-afk/tititalk-windows \
@@ -53,7 +53,7 @@ fi
 
 # 1b. 拿 .sig + windows-update.json（updater 必需，没有则只发 .exe + 警告）
 if [[ ! -f "$LOCAL_SIG" ]]; then
-    echo "==> 本地无 $SIG_NAME，尝试从 GH Release 拉…"
+    echo "==> 本地无 ${SIG_NAME}，尝试从 GH Release 拉…"
     gh release download "v$VERSION" --repo yigenyecao-afk/tititalk-windows \
         -p "$SIG_NAME" -O "$LOCAL_SIG" 2>/dev/null || true
 fi
@@ -89,7 +89,7 @@ if [[ -f "$LOCAL_SIG" ]]; then
     scp -q "$LOCAL_SIG" "$SERVER:$SERVER_DOWNLOADS/$SERVER_SIG_NAME"
     ssh "$SERVER" "chmod 644 $SERVER_DOWNLOADS/$SERVER_SIG_NAME"
 else
-    echo "⚠️  无 $SIG_NAME，跳过 updater 通道（用户不会收到自动更新）"
+    echo "⚠️  无 ${SIG_NAME}，跳过 updater 通道（用户不会收到自动更新）"
 fi
 if [[ -f "$LOCAL_UPDATE_JSON" ]]; then
     scp -q "$LOCAL_UPDATE_JSON" "$SERVER:$SERVER_DOWNLOADS/windows-update.json.new"
