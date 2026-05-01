@@ -68,7 +68,7 @@ REMOTE
 
 ## 4. 部署网站前端 + 后端改动（~3 min）
 
-我已经在本地改好这几个文件，**还没推到 git**：
+我已经在本地改好这 5 个文件（`tititalk-site` 本地不是 git 仓，按你之前 rsync 的方式同步即可）：
 
 ```
 tititalk-site/frontend/lib/release.ts       (+EXE_URL, +WIN_VERSION)
@@ -78,23 +78,33 @@ tititalk-site/storage/downloads/README.md   (NEW，部署 checklist)
 tititalk-site/storage/downloads/appcast-win.xml  (NEW，Tauri updater 占位)
 ```
 
-部署：
+同步 + 重启：
 
 ```bash
-cd /Users/lingyin/Documents/tititalk-site
-git status                                   # 应该看到上面 5 个文件
-git add -A
-git commit -m "feat(release): 加 Windows v0.1.0 下载入口 + /api/release/latest?platform 分流"
-git push                                     # 假设线上有 webhook 自动 deploy；没有继续看下一步
+# A. 前端：本地构建好再 rsync（避免在生产机上跑 pnpm install/build）
+cd /Users/lingyin/Documents/tititalk-site/frontend
+pnpm build
+rsync -av --delete .next/ root@43.106.48.21:/opt/tititalk-site/frontend/.next/
+rsync -av public/ root@43.106.48.21:/opt/tititalk-site/frontend/public/
+rsync -av lib/release.ts root@43.106.48.21:/opt/tititalk-site/frontend/lib/release.ts
+rsync -av app/page.tsx   root@43.106.48.21:/opt/tititalk-site/frontend/app/page.tsx
 
-# 如果生产是 systemd 拉本地路径（不通过 git pull），手动同步：
-ssh root@43.106.48.21 <<'REMOTE'
-  cd /opt/tititalk-site && git pull
-  cd frontend && pnpm install --prod && pnpm build
-  systemctl restart tititalk-frontend tititalk-api
-  systemctl status tititalk-frontend tititalk-api --no-pager
-REMOTE
+# B. 后端 + storage：直接同步
+rsync -av /Users/lingyin/Documents/tititalk-site/backend/app/main.py \
+  root@43.106.48.21:/opt/tititalk-site/backend/app/main.py
+rsync -av /Users/lingyin/Documents/tititalk-site/storage/downloads/appcast-win.xml \
+  /Users/lingyin/Documents/tititalk-site/storage/downloads/README.md \
+  root@43.106.48.21:/opt/tititalk-site/storage/downloads/
+
+# C. 重启 systemd 双服务
+ssh root@43.106.48.21 'systemctl restart tititalk-frontend tititalk-api && \
+  systemctl status tititalk-frontend tititalk-api --no-pager | head -30'
 ```
+
+> 如果你日常其实是把整个 `tititalk-site` 都 rsync 过去，可以一条命令：
+> `rsync -av --exclude node_modules --exclude .next/cache /Users/lingyin/Documents/tititalk-site/ root@43.106.48.21:/opt/tititalk-site/`，
+> 然后 ssh 去 `cd frontend && pnpm install --prod && pnpm build && systemctl restart tititalk-*`。
+> 这条更稳但更慢。
 
 ---
 
