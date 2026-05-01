@@ -194,6 +194,48 @@ impl Account {
         }
     }
 
+    /// True iff the user has paid the ¥49 「专业版」 unlock. Read from
+    /// `User.pro_unlocked_at` inside the authenticated state. Used as the
+    /// gate for local Whisper engine + BYOK menu.
+    pub fn is_pro_unlocked(&self) -> bool {
+        let g = self.inner.read();
+        match &g.state {
+            auth::AuthState::Authenticated { user } => user.pro_unlocked_at.is_some(),
+            _ => false,
+        }
+    }
+
+    /// Read access token (for ASR proxy + future authed direct calls).
+    pub fn access_token(&self) -> Option<String> {
+        self.inner.read().access_token.clone()
+    }
+
+    /// Forward an X-User-Plan header observation. Mirrors what the api_client
+    /// PlanObserver closure does — call sites that talk to tititalk.com via
+    /// reqwest directly (e.g. ASR multipart upload in asr.rs) use this so
+    /// the drift detector still fires and triggers a license refresh.
+    /// Idempotent: same plan as last seen → no-op.
+    pub async fn observe_plan_header(&self, plan_opt: Option<String>) {
+        let plan = match plan_opt.filter(|s| !s.is_empty()) {
+            Some(p) => p,
+            None => return,
+        };
+        let last = {
+            let w = self.inner.read();
+            w.last_seen_plan.clone()
+        };
+        if last.as_deref() == Some(plan.as_str()) { return; }
+        let needs_refresh = last.is_some(); // bootstrap (no last) → just record
+        self.inner.write().last_seen_plan = Some(plan.clone());
+        if !needs_refresh { return; }
+        log::info!("X-User-Plan drift ({:?} → {}) — refreshing license", last, plan);
+        if let Ok(lic) = auth::fetch_license(&self.api).await {
+            license::save(&lic);
+            self.inner.write().license = Some(lic);
+            self.emit_state();
+        }
+    }
+
     /// Called once at app launch. Try to swap a stored refresh for an
     /// access token; on success load /me and start sync. Failure is
     /// silent — user will see logged-out state and can hit Login.

@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// Engine: "qwen" (DashScope/百炼) or "openai".
+    /// Engine: "tititalk_cloud" (推荐 · 走 tititalk.com 代理 · 计平台额度) /
+    /// "qwen" (BYOK DashScope/百炼 直连，需自填 key，不计平台额度) /
+    /// "openai" (BYOK OpenAI Whisper)。
+    /// 默认 tititalk_cloud — 商业模型核心路径，新用户登录即可用。
     #[serde(default = "default_engine")]
     pub engine: String,
     /// API key for the active engine. Stored locally (Windows DPAPI in v0.2).
@@ -44,7 +47,7 @@ pub struct AppConfig {
     pub stylist_model: String,
 }
 
-fn default_engine() -> String { "qwen".into() }
+fn default_engine() -> String { "tititalk_cloud".into() }
 fn default_model() -> String { "qwen3-asr-flash".into() }
 fn default_lang() -> String { "zh".into() }
 fn default_hotkey() -> u32 { 0x70 } // VK_F1

@@ -1,4 +1,4 @@
-export type Engine = "qwen" | "openai";
+export type Engine = "tititalk_cloud" | "qwen" | "openai";
 
 export interface AppConfig {
   engine: Engine;

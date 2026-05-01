@@ -30,8 +30,13 @@ pub struct User {
     pub user_id: i64,
     pub username: String,
     pub display_name: Option<String>,
+    /// free | pro_annual | pro_flagship | pro_lifetime(legacy)
     pub plan: String,
     pub plan_expires_at: Option<String>,
+    /// (api-integration §1.2) ¥49 「专业版」一次性解锁时间戳。
+    /// None = 未解锁 → 本地 Whisper 禁用 + BYOK 端点 402；
+    /// Some = 永久解锁，与 plan 完全独立加购。
+    pub pro_unlocked_at: Option<String>,
     pub created_at: String,
 }
 
@@ -39,6 +44,12 @@ pub struct User {
 pub struct QuotaInfo {
     pub date: String,
     pub plan: Option<String>,
+    /// (api-integration §2.3) token 主口径。display = real ASR token × 2，
+    /// 0.1 秒说话 = 1 token。Free 18k/Pro 72k/旗舰 216k per day。
+    pub limit_tokens: Option<i64>,
+    pub used_tokens: Option<i64>,
+    pub remaining_tokens: Option<i64>,
+    /// 旧 cents 口径（兼容，新逻辑应优先 token；非 free 档为 None）。
     pub limit_cents: Option<i64>,
     pub used_cents: i64,
     pub remaining_cents: Option<i64>,
@@ -337,14 +348,15 @@ pub fn can_use_cloud(
     if lic.plan == "pro_lifetime" {
         return true;
     }
-    if lic.valid && lic.plan == "pro_annual" {
+    if lic.valid && (lic.plan == "pro_annual" || lic.plan == "pro_flagship") {
         return true;
     }
-    // Free tier — gate on remaining quota.
+    // Free tier — gate on remaining quota. Token 优先（新口径），fallback cents。
     if let Some(q) = quota {
-        if q.remaining_cents.unwrap_or(0) <= 0 {
-            return false;
+        if let Some(rem_t) = q.remaining_tokens {
+            return rem_t > 0;
         }
+        return q.remaining_cents.unwrap_or(0) > 0;
     }
     true
 }

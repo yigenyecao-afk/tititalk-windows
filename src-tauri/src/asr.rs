@@ -1,28 +1,40 @@
 use anyhow::{anyhow, Context};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::audio::CapturedAudio;
 use crate::config::AppConfig;
+use crate::state::AppState;
 
 const QWEN_ENDPOINT: &str =
     "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription";
 
+/// (api-integration §4.8) tititalk.com proxy — receives 16kHz mono i16 PCM
+/// (RAW bytes, no WAV header), Bearer-authed, returns `{text, cost_tokens, ...}`
+/// + `X-User-Plan` header. Bills against the user's daily quota.
+const TITITALK_ASR_ENDPOINT: &str = "https://tititalk.com/api/asr/transcribe";
+
 /// Smoke test: hit /api/v1/models or similar lightweight endpoint with the key
 /// to verify the credential is at least syntactically valid + not banned.
+/// For `tititalk_cloud` engine (no user-supplied key), nothing to test —
+/// auth is verified via the Account login flow directly.
 pub async fn test_credentials(cfg: &AppConfig) -> anyhow::Result<String> {
+    if cfg.engine == "tititalk_cloud" {
+        return Ok("使用 TiTiTalk 云端 — 凭据通过登录验证".into());
+    }
     if cfg.api_key.trim().is_empty() {
         return Err(anyhow!("API key 为空"));
     }
     match cfg.engine.as_str() {
         "qwen" => {
             // DashScope doesn't have a free /models call; do a tiny silent ASR ping instead.
-            let silent = CapturedAudio {
+            // (Internal call — no Account state needed for BYOK direct paths.)
+            qwen_transcribe(cfg, &CapturedAudio {
                 samples_i16: vec![0i16; 16_000 / 2], // 0.5s silence
                 sample_rate: 16_000,
                 duration_secs: 0.5,
-            };
-            transcribe(cfg, &silent).await.map(|t| {
+            }).await.map(|t| {
                 if t.trim().is_empty() {
                     "OK（空白音频，凭据有效）".into()
                 } else {
@@ -50,13 +62,36 @@ pub async fn test_credentials(cfg: &AppConfig) -> anyhow::Result<String> {
     }
 }
 
-pub async fn transcribe(cfg: &AppConfig, audio: &CapturedAudio) -> anyhow::Result<String> {
-    if cfg.api_key.trim().is_empty() {
-        return Err(anyhow!("尚未配置 API key（在「设置」里填）"));
-    }
+pub async fn transcribe(
+    cfg: &AppConfig,
+    audio: &CapturedAudio,
+    state: &Arc<AppState>,
+) -> anyhow::Result<String> {
     match cfg.engine.as_str() {
-        "qwen" => qwen_transcribe(cfg, audio).await,
-        "openai" => openai_transcribe(cfg, audio).await,
+        "tititalk_cloud" => tititalk_cloud_transcribe(cfg, audio, state).await,
+        // BYOK direct paths — require user-supplied key AND pro_unlocked.
+        // Enforced server-side too (license + 402), but the client-side
+        // check gives an immediate friendly error instead of a wasted
+        // upload + opaque server response.
+        "qwen" | "openai" => {
+            let pro_unlocked = {
+                let acc = state.account.read().clone();
+                acc.map(|a| a.is_pro_unlocked()).unwrap_or(false)
+            };
+            if !pro_unlocked {
+                return Err(anyhow!(
+                    "BYOK 直连引擎需要专业解锁包（pro_locked）。前往 tititalk.com/pricing 解锁 ¥49 一次性，或切换到 TiTiTalk 云端。"
+                ));
+            }
+            if cfg.api_key.trim().is_empty() {
+                return Err(anyhow!("尚未配置 API key（在「设置」里填，或切换到 TiTiTalk 云端）"));
+            }
+            match cfg.engine.as_str() {
+                "qwen" => qwen_transcribe(cfg, audio).await,
+                "openai" => openai_transcribe(cfg, audio).await,
+                _ => unreachable!(),
+            }
+        }
         other => Err(anyhow!("未知引擎 {other}")),
     }
 }
@@ -153,6 +188,80 @@ async fn qwen_transcribe(cfg: &AppConfig, audio: &CapturedAudio) -> anyhow::Resu
         return Ok(clean_asr_text(&joined));
     }
     Err(anyhow!("响应既无 text 也无 sentences"))
+}
+
+// ---------- TiTiTalk cloud proxy (api-integration §4.8) ----------
+
+/// (api-integration §4.8) TitiTalk 云端代理。要求用户已登录；audio 上传 16k mono i16 RAW PCM
+/// （不带 wav header）。
+///
+/// 错误处理：
+/// - 401: token 失效 → 调用方走 refresh 流程（Account 已自动 retry）
+/// - 402 pro_locked: BYOK 闸口；不会出现在此端点
+/// - 429 quota_exceeded: 配额耗尽；error message 含 fallbacks，UI 弹升级卡
+/// - 504/502: 上游百炼问题，提示重试不降级
+async fn tititalk_cloud_transcribe(
+    _cfg: &AppConfig,
+    audio: &CapturedAudio,
+    state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let access = {
+        let acc = state.account.read().clone();
+        acc.and_then(|a| a.access_token())
+            .ok_or_else(|| anyhow!("未登录 TiTiTalk — 请在「设置 → 账号」登录后重试"))?
+    };
+
+    // RAW PCM bytes (i16 LE, 16k mono) — server expects no WAV header per §4.8
+    let mut pcm: Vec<u8> = Vec::with_capacity(audio.samples_i16.len() * 2);
+    for s in &audio.samples_i16 {
+        pcm.extend_from_slice(&s.to_le_bytes());
+    }
+
+    let part = reqwest::multipart::Part::bytes(pcm)
+        .file_name("audio.pcm")
+        .mime_str("application/octet-stream")?;
+    let form = reqwest::multipart::Form::new()
+        .text("sample_rate", audio.sample_rate.to_string())
+        .part("audio", part);
+
+    let resp = reqwest::Client::new()
+        .post(TITITALK_ASR_ENDPOINT)
+        .bearer_auth(&access)
+        .multipart(form)
+        .send()
+        .await
+        .context("TiTiTalk ASR 请求失败")?;
+
+    let status = resp.status();
+    let plan_header = resp
+        .headers()
+        .get("x-user-plan")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let body = resp.text().await.unwrap_or_default();
+
+    // Forward plan header to Account drift detector — keep parity with global tap.
+    if let Some(plan) = plan_header {
+        if let Some(acc) = state.account.read().clone() {
+            tauri::async_runtime::spawn(async move {
+                acc.observe_plan_header(Some(plan)).await;
+            });
+        }
+    }
+
+    if !status.is_success() {
+        // Surface code + message verbatim — UI parses for "quota_exceeded" / "pro_locked".
+        return Err(anyhow!("TiTiTalk 云端 ASR {status}: {body}"));
+    }
+
+    #[derive(Deserialize)]
+    struct ProxyResp {
+        text: String,
+        // Other fields (cost_tokens, used_tokens, remaining_tokens) are
+        // accessible via /api/me/quota — UI fetches there.
+    }
+    let parsed: ProxyResp = serde_json::from_str(&body).context("TiTiTalk ASR 响应解析失败")?;
+    Ok(clean_asr_text(&parsed.text))
 }
 
 // ---------- OpenAI Whisper ----------

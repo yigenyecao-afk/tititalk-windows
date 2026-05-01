@@ -9,8 +9,14 @@ import {
 } from "./lib/updater";
 import AccountSection from "./components/AccountSection";
 import ConflictDialog from "./components/ConflictDialog";
+import {
+  getAccountState,
+  isProUnlocked,
+  onAccountState,
+  type AccountSnapshot,
+} from "./lib/account";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 type Tab = "home" | "settings" | "history" | "about";
 
@@ -20,31 +26,48 @@ export default function App() {
   const [recent, setRecent] = useState<{ at: string; text: string }[]>([]);
   const [statusLine, setStatusLine] = useState<string>("准备中");
   const [update, setUpdate] = useState<UpdateStatus>({ state: "idle" });
+  /// Set when the most recent ASR call returned 402 pro_locked or 429
+  /// quota_exceeded. Renders a sticky UpgradeBanner above the app body
+  /// with a one-click jump to the pricing page. Cleared by the user
+  /// (✕ button) or when the next session succeeds.
+  const [upgrade, setUpgrade] = useState<UpgradeReason | null>(null);
+  /// Mirror of the Rust-side AccountSnapshot. Drives `isProUnlocked` in the
+  /// Settings pane (gates the BYOK options) + plan badges in HomePane.
+  const [account, setAccount] = useState<AccountSnapshot | null>(null);
 
   useEffect(() => {
     getConfig().then(setCfg).catch((e) => console.error(e));
+    getAccountState().then(setAccount).catch((e) => console.error(e));
+    const accountUn = onAccountState(setAccount);
     const un = onPipeline((ev: PipelineEvent) => {
       if (ev.kind === "phase") {
         setStatusLine(phaseLabel(ev.phase));
       } else if (ev.kind === "transcript") {
         setRecent((r) => [{ at: new Date().toISOString(), text: ev.text }, ...r].slice(0, 50));
         setStatusLine("已转写：" + ev.text.slice(0, 30));
+        setUpgrade(null); // success — clear any stale upgrade banner
       } else if (ev.kind === "error") {
         setStatusLine("错误：" + ev.message);
+        const reason = detectUpgradeReason(ev.message);
+        if (reason) setUpgrade(reason);
       }
     });
     // Check for update on launch (silent if up-to-date or offline)
     checkForUpdate().then(setUpdate);
     return () => {
       un.then((fn) => fn());
+      accountUn.then((fn) => fn());
     };
   }, []);
+
+  const proUnlocked = isProUnlocked(account);
 
   if (!cfg) return <div className="p-10 text-ink-500">加载中…</div>;
 
   return (
     <div className="min-h-screen flex flex-col">
       <UpdateBanner status={update} setStatus={setUpdate} />
+      {upgrade && <UpgradeBanner reason={upgrade} onDismiss={() => setUpgrade(null)} />}
       <ConflictDialog />
       <div className="flex-1 flex">
       <aside className="w-56 shrink-0 border-r border-ink-200 bg-white">
@@ -67,6 +90,7 @@ export default function App() {
         {tab === "settings" && (
           <SettingsPane
             cfg={cfg}
+            proUnlocked={proUnlocked}
             onSave={async (next) => {
               await saveConfig(next);
               setCfg(next);
@@ -77,6 +101,61 @@ export default function App() {
         {tab === "about" && <AboutPane />}
       </main>
       </div>
+    </div>
+  );
+}
+
+type UpgradeReason = "quota_exceeded" | "pro_locked";
+
+/// Match common shapes from the backend error: `{"error":"quota_exceeded",...}`
+/// JSON, the friendly Chinese strings produced by `asr.rs`, and the raw HTTP
+/// status. Returns null when the error doesn't warrant an upgrade prompt.
+function detectUpgradeReason(msg: string): UpgradeReason | null {
+  const lower = msg.toLowerCase();
+  if (lower.includes("quota_exceeded") || msg.includes("额度已用完") || msg.includes("额度用完")) {
+    return "quota_exceeded";
+  }
+  if (lower.includes("pro_locked") || msg.includes("专业解锁包")) {
+    return "pro_locked";
+  }
+  // 402 / 429 fallthrough — server returns code in body but if a transport
+  // layer truncated, lean on the raw status digits.
+  if (msg.includes(" 402 ") || msg.includes(" 429 ")) {
+    return msg.includes("402") ? "pro_locked" : "quota_exceeded";
+  }
+  return null;
+}
+
+function UpgradeBanner({ reason, onDismiss }: { reason: UpgradeReason; onDismiss: () => void }) {
+  const copy =
+    reason === "quota_exceeded"
+      ? "今日云端 ASR 额度用完。可升级专业版解锁更多 token，或切到本地 / 自带 API key。"
+      : "此引擎需要专业解锁包（¥49 一次性）。本地 Whisper 与 BYOK 路径都解锁。";
+  const open = () => {
+    // Tauri opener — fall back to window.open for dev mode.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const opener = (window as unknown as { __TAURI__?: { opener?: { openUrl: (u: string) => Promise<void> } } }).__TAURI__?.opener;
+      if (opener) {
+        void opener.openUrl("https://tititalk.com/pricing");
+        return;
+      }
+    } catch {/* fallthrough */}
+    window.open("https://tititalk.com/pricing", "_blank");
+  };
+  return (
+    <div className="bg-amber-500 text-white px-5 py-2.5 flex items-center gap-3 text-sm">
+      <span className="text-base">⚠</span>
+      <div className="flex-1">{copy}</div>
+      <button
+        className="px-3 py-1 rounded bg-white text-amber-700 text-xs font-medium hover:bg-amber-50"
+        onClick={open}
+      >去升级</button>
+      <button
+        className="text-white/80 hover:text-white text-xs"
+        onClick={onDismiss}
+        aria-label="关闭"
+      >✕</button>
     </div>
   );
 }
@@ -194,13 +273,19 @@ function Card({ title, body }: { title: string; body: string }) {
 }
 
 function SettingsPane({
-  cfg, onSave,
-}: { cfg: AppConfig; onSave: (next: AppConfig) => Promise<void> }) {
+  cfg, proUnlocked, onSave,
+}: { cfg: AppConfig; proUnlocked: boolean; onSave: (next: AppConfig) => Promise<void> }) {
   const [draft, setDraft] = useState<AppConfig>(cfg);
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState<string>("");
 
   function patch<K extends keyof AppConfig>(k: K, v: AppConfig[K]) {
+    // (commercialization) Gate BYOK on pro_unlocked. Snap silently to the
+    // cloud proxy + open the pricing page so user knows why.
+    if (k === "engine" && (v === "qwen" || v === "openai") && !proUnlocked) {
+      window.open("https://tititalk.com/pricing", "_blank");
+      return;
+    }
     setDraft((d) => ({ ...d, [k]: v }));
   }
 
@@ -215,27 +300,49 @@ function SettingsPane({
             value={draft.engine}
             onChange={(e) => patch("engine", e.target.value as AppConfig["engine"])}
           >
-            <option value="qwen">百炼 Qwen（推荐 · 中文最强）</option>
-            <option value="openai">OpenAI Whisper</option>
+            <option value="tititalk_cloud">TiTiTalk 云端（推荐 · 需登录 · 计平台额度）</option>
+            <option value="qwen">{proUnlocked ? "" : "🔒 "}百炼 Qwen 直连（自带 key · 不计平台额度）</option>
+            <option value="openai">{proUnlocked ? "" : "🔒 "}OpenAI Whisper 直连（自带 key）</option>
           </select>
         </Field>
-        <Field label="模型">
-          <input
-            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-full"
-            value={draft.model}
-            onChange={(e) => patch("model", e.target.value)}
-            placeholder={draft.engine === "qwen" ? "qwen3-asr-flash" : "whisper-1"}
-          />
-        </Field>
-        <Field label="API key">
-          <input
-            type="password"
-            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-full"
-            value={draft.api_key}
-            onChange={(e) => patch("api_key", e.target.value)}
-            placeholder={draft.engine === "qwen" ? "sk-xxx（百炼）" : "sk-xxx（OpenAI）"}
-          />
-        </Field>
+        {!proUnlocked && (
+          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 flex items-center gap-2">
+            <span>🔒</span>
+            <span className="flex-1">BYOK 直连引擎需要专业解锁包（¥49 一次性，永久解锁）。</span>
+            <a
+              className="text-amber-900 underline hover:no-underline"
+              href="https://tititalk.com/pricing"
+              target="_blank"
+              rel="noreferrer"
+            >去解锁</a>
+          </div>
+        )}
+        {draft.engine !== "tititalk_cloud" && (
+          <>
+            <Field label="模型">
+              <input
+                className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-full"
+                value={draft.model}
+                onChange={(e) => patch("model", e.target.value)}
+                placeholder={draft.engine === "qwen" ? "qwen3-asr-flash" : "whisper-1"}
+              />
+            </Field>
+            <Field label="API key">
+              <input
+                type="password"
+                className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-full"
+                value={draft.api_key}
+                onChange={(e) => patch("api_key", e.target.value)}
+                placeholder={draft.engine === "qwen" ? "sk-xxx（百炼）" : "sk-xxx（OpenAI）"}
+              />
+            </Field>
+          </>
+        )}
+        {draft.engine === "tititalk_cloud" && (
+          <div className="text-xs text-ink-500 leading-relaxed">
+            云端走 tititalk.com 代理，按 0.1 秒说话 = 1 token 计费。免费档每日 18,000 token（30 分钟）；Pro / 旗舰升级看「账号」标签。
+          </div>
+        )}
         <Field label="语言">
           <select
             className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300"

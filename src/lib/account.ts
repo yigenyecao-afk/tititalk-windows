@@ -10,8 +10,12 @@ export interface User {
   user_id: number;
   username: string;
   display_name: string | null;
-  plan: string; // "free" | "pro_annual" | "pro_lifetime"
+  /** "free" | "pro_annual" | "pro_flagship" | "pro_lifetime" (legacy) */
+  plan: string;
   plan_expires_at: string | null;
+  /** ISO timestamp; non-null = ¥49 专业版解锁包已购，本地 + BYOK 路径全开。
+   * 与 plan 完全独立。 */
+  pro_unlocked_at: string | null;
   created_at: string;
 }
 
@@ -33,11 +37,22 @@ export interface LicenseInfo {
 export interface QuotaInfo {
   date: string;
   plan?: string | null;
+  /** Token 口径（首选 · v0.6+）。0.1s 说话 ≈ 1 token。 */
+  limit_tokens?: number | null;
+  used_tokens?: number | null;
+  remaining_tokens?: number | null;
+  /** 旧 cents 口径（兼容；客户端 v0.6 以下读这个）。 */
   limit_cents: number | null;
   used_cents: number;
   remaining_cents: number | null;
   call_count?: number | null;
   reset_at: string;
+}
+
+/** Helper: 已登录 + 已解锁 ¥49 专业包。本地 / BYOK 引擎 UI gate 用这个。 */
+export function isProUnlocked(snap: AccountSnapshot | null): boolean {
+  if (!snap || snap.state.kind !== "authenticated") return false;
+  return snap.state.user.pro_unlocked_at != null;
 }
 
 export interface AccountSnapshot {

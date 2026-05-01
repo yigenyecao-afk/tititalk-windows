@@ -130,7 +130,7 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     state.set_phase(PipelinePhase::Transcribing);
 
     let cfg = state.config.read().clone();
-    let raw = match asr::transcribe(&cfg, &captured).await {
+    let raw = match asr::transcribe(&cfg, &captured, &state).await {
         Ok(t) => t,
         Err(e) => {
             state.set_phase(PipelinePhase::Failed);

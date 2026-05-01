@@ -211,11 +211,20 @@ function AuthenticatedView({
           </div>
           <div className="text-xs text-ink-400">@{user.username}</div>
         </div>
-        <PlanBadge plan={user.plan} />
+        <div className="flex items-center gap-1.5">
+          <PlanBadge plan={user.plan} />
+          {user.pro_unlocked_at && (
+            <span className="text-xs px-2 py-0.5 rounded border font-medium bg-amber-50 text-amber-700 border-amber-200">
+              专业解锁
+            </span>
+          )}
+        </div>
       </div>
 
       {license && <LicenseRow lic={license} />}
-      {user.plan === "free" && quota && <QuotaBar q={quota} />}
+      {quota && <QuotaBar q={quota} />}
+
+      <UpgradeCard user={user} />
 
       {devices && devices.length > 0 && (
         <div>
@@ -270,14 +279,71 @@ function AuthenticatedView({
 function PlanBadge({ plan }: { plan: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     pro_lifetime: { label: "终身", cls: "bg-purple-50 text-purple-700 border-purple-200" },
-    pro_annual: { label: "Pro", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-    free: { label: "免费 ¥1/天", cls: "bg-ink-100 text-ink-600 border-ink-200" },
+    pro_flagship: { label: "旗舰", cls: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
+    pro_annual: { label: "年订", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+    free: { label: "免费", cls: "bg-ink-100 text-ink-600 border-ink-200" },
   };
   const m = map[plan] || { label: plan, cls: "bg-ink-100 text-ink-600 border-ink-200" };
   return (
     <span className={"text-xs px-2 py-0.5 rounded border font-medium " + m.cls}>
       {m.label}
     </span>
+  );
+}
+
+function UpgradeCard({ user }: { user: User }) {
+  // 全已购：年订 + 旗舰 + 解锁包 = 不显示 upsell。
+  const hasMembership = user.plan === "pro_annual" || user.plan === "pro_flagship" || user.plan === "pro_lifetime";
+  const hasUnlock = !!user.pro_unlocked_at;
+  if (hasMembership && hasUnlock) return null;
+  return (
+    <div className="rounded border border-ink-200 bg-ink-50 p-3 space-y-2">
+      <div className="text-xs font-medium text-ink-700">解锁更多能力</div>
+      <div className="grid grid-cols-1 gap-2">
+        {user.plan === "free" && (
+          <a
+            href="https://tititalk.com/pricing#annual"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-between rounded bg-white border border-ink-200 px-3 py-2 hover:border-indigo-300 transition"
+          >
+            <div>
+              <div className="text-sm font-medium text-ink-900">年订专业版</div>
+              <div className="text-xs text-ink-500">每日 72k tokens（2 小时）· ¥98 / 年</div>
+            </div>
+            <span className="text-xs text-indigo-700">升级 →</span>
+          </a>
+        )}
+        {user.plan !== "pro_flagship" && user.plan !== "pro_lifetime" && (
+          <a
+            href="https://tititalk.com/pricing#flagship"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-between rounded bg-white border border-ink-200 px-3 py-2 hover:border-fuchsia-300 transition"
+          >
+            <div>
+              <div className="text-sm font-medium text-ink-900">旗舰版</div>
+              <div className="text-xs text-ink-500">每日 216k tokens（6 小时）· ¥399 / 年</div>
+            </div>
+            <span className="text-xs text-fuchsia-700">升级 →</span>
+          </a>
+        )}
+        {!hasUnlock && (
+          <a
+            href="https://tititalk.com/pricing#unlock"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-between rounded bg-white border border-ink-200 px-3 py-2 hover:border-amber-300 transition"
+          >
+            <div>
+              <div className="text-sm font-medium text-ink-900">专业解锁包</div>
+              <div className="text-xs text-ink-500">本地 Whisper + BYOK 直连 · ¥49 一次性</div>
+            </div>
+            <span className="text-xs text-amber-700">解锁 →</span>
+          </a>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -293,6 +359,44 @@ function LicenseRow({ lic }: { lic: LicenseInfo }) {
 }
 
 function QuotaBar({ q }: { q: QuotaInfo }) {
+  // 优先 token 口径（v0.6+）。0.1s 说话 ≈ 1 token，10 token ≈ 1 秒录音。
+  const hasTokens = q.limit_tokens != null && q.used_tokens != null && q.remaining_tokens != null;
+  if (hasTokens) {
+    const used = q.used_tokens!;
+    const limit = Math.max(1, q.limit_tokens!);
+    const remaining = q.remaining_tokens!;
+    const pct = Math.min(1, used / limit);
+    const empty = remaining === 0;
+    return (
+      <div>
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-medium text-ink-700">今日云端 token</span>
+          <span className={"tabular-nums " + (empty ? "text-red-600" : "text-ink-900")}>
+            {fmtNumber(remaining)} / {fmtNumber(limit)} tokens
+          </span>
+        </div>
+        <div className="mt-1 h-2 rounded bg-ink-100 overflow-hidden">
+          <div
+            className={
+              "h-full " +
+              (empty ? "bg-red-500" : pct > 0.8 ? "bg-amber-500" : "bg-ink-700")
+            }
+            style={{ width: `${pct * 100}%` }}
+          />
+        </div>
+        {empty ? (
+          <div className="text-[11px] text-ink-500 mt-1">
+            今日 token 用完。可升级专业版、解锁本地 Whisper 或切到 BYOK 自带 key。明天 0 点重置。
+          </div>
+        ) : pct > 0.8 ? (
+          <div className="text-[11px] text-ink-500 mt-1">
+            快用完了：约 {fmtTokenSeconds(remaining)} 录音剩余。
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+  // 旧 cents 口径（兼容）。
   const used = q.used_cents;
   const limit = Math.max(1, q.limit_cents ?? 100);
   const remaining = q.remaining_cents ?? 0;
@@ -322,6 +426,20 @@ function QuotaBar({ q }: { q: QuotaInfo }) {
       )}
     </div>
   );
+}
+
+function fmtNumber(n: number): string {
+  return n.toLocaleString("zh-CN");
+}
+
+function fmtTokenSeconds(tokens: number): string {
+  const secs = Math.max(0, Math.floor(tokens / 10));
+  if (secs >= 60) {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return s === 0 ? `${m} 分钟` : `${m}分${s}秒`;
+  }
+  return `${secs} 秒`;
 }
 
 function prettyDate(iso: string): string {
