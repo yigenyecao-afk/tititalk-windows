@@ -1,0 +1,76 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TiTiTalk",
+  "version": "0.1.0",
+  "identifier": "com.tititalk.windows",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "TiTiTalk",
+        "url": "index.html",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 880,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "visible": false,
+        "center": true
+      },
+      {
+        "label": "pill",
+        "title": "TiTiTalk Pill",
+        "url": "pill.html",
+        "width": 220,
+        "height": 56,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false,
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": false,
+      "tooltip": "TiTiTalk"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "publisher": "TiTiTalk",
+    "shortDescription": "语音输入法 · 按住快捷键说话",
+    "longDescription": "TiTiTalk Windows — 按住快捷键说话，松开自动转写到光标处。微信、邮件、IDE、Notion 全都能用。",
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  }
+}

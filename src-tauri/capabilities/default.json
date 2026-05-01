@@ -1,0 +1,24 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for TiTiTalk main + pill windows",
+  "windows": ["main", "pill"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:webview:allow-create-webview-window",
+    "core:event:default",
+    "core:app:default",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text",
+    "dialog:default",
+    "os:default",
+    "shell:default",
+    "shell:allow-open"
+  ]
+}
