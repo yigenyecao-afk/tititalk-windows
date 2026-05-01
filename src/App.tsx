@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { getConfig, onPipeline, saveConfig, testAsr, VK_CHOICES } from "./lib/api";
 import type { AppConfig, PipelineEvent } from "./lib/types";
+import {
+  checkForUpdate,
+  downloadAndInstall,
+  restart,
+  type UpdateStatus,
+} from "./lib/updater";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 type Tab = "home" | "settings" | "history" | "about";
 
@@ -11,6 +17,7 @@ export default function App() {
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [recent, setRecent] = useState<{ at: string; text: string }[]>([]);
   const [statusLine, setStatusLine] = useState<string>("准备中");
+  const [update, setUpdate] = useState<UpdateStatus>({ state: "idle" });
 
   useEffect(() => {
     getConfig().then(setCfg).catch((e) => console.error(e));
@@ -24,6 +31,8 @@ export default function App() {
         setStatusLine("错误：" + ev.message);
       }
     });
+    // Check for update on launch (silent if up-to-date or offline)
+    checkForUpdate().then(setUpdate);
     return () => {
       un.then((fn) => fn());
     };
@@ -32,7 +41,9 @@ export default function App() {
   if (!cfg) return <div className="p-10 text-ink-500">加载中…</div>;
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen flex flex-col">
+      <UpdateBanner status={update} setStatus={setUpdate} />
+      <div className="flex-1 flex">
       <aside className="w-56 shrink-0 border-r border-ink-200 bg-white">
         <div className="px-5 pt-5 pb-3">
           <div className="text-lg font-semibold text-ink-900">TiTiTalk</div>
@@ -62,8 +73,70 @@ export default function App() {
         {tab === "history" && <HistoryPane items={recent} />}
         {tab === "about" && <AboutPane />}
       </main>
+      </div>
     </div>
   );
+}
+
+function UpdateBanner({
+  status, setStatus,
+}: { status: UpdateStatus; setStatus: (s: UpdateStatus) => void }) {
+  if (status.state === "idle" || status.state === "checking" || status.state === "uptodate") {
+    return null;
+  }
+  if (status.state === "error") {
+    // Silent on error — startup check shouldn't nag
+    return null;
+  }
+  if (status.state === "available") {
+    const { version, notes, update } = status;
+    return (
+      <div className="bg-ink-900 text-white px-5 py-2.5 flex items-center gap-3 text-sm">
+        <div className="flex-1">
+          <span className="font-medium">TiTiTalk v{version}</span>
+          <span className="text-ink-300 ml-2">已发布{notes ? `：${notes.slice(0, 60)}` : ""}</span>
+        </div>
+        <button
+          className="px-3 py-1 rounded bg-white text-ink-900 text-xs font-medium hover:bg-ink-100"
+          onClick={async () => {
+            setStatus({ state: "downloading", version, bytes: 0 });
+            try {
+              await downloadAndInstall(update, (bytes, total) =>
+                setStatus({ state: "downloading", version, bytes, total }),
+              );
+              setStatus({ state: "ready", version });
+            } catch (e) {
+              setStatus({ state: "error", message: String(e) });
+            }
+          }}
+        >立即更新</button>
+        <button
+          className="text-ink-300 hover:text-white text-xs"
+          onClick={() => setStatus({ state: "idle" })}
+        >稍后</button>
+      </div>
+    );
+  }
+  if (status.state === "downloading") {
+    const pct = status.total ? Math.floor((status.bytes / status.total) * 100) : null;
+    return (
+      <div className="bg-ink-900 text-white px-5 py-2.5 text-sm">
+        正在下载 v{status.version}…{pct !== null ? ` ${pct}%` : ""}
+      </div>
+    );
+  }
+  if (status.state === "ready") {
+    return (
+      <div className="bg-emerald-700 text-white px-5 py-2.5 flex items-center gap-3 text-sm">
+        <div className="flex-1">v{status.version} 已就绪，重启应用即可生效</div>
+        <button
+          className="px-3 py-1 rounded bg-white text-emerald-900 text-xs font-medium hover:bg-emerald-50"
+          onClick={() => restart()}
+        >立即重启</button>
+      </div>
+    );
+  }
+  return null;
 }
 
 function NavBtn({
@@ -224,6 +297,40 @@ function SettingsPane({
         />
       </Section>
 
+      <Section title="润色（Stylist · 转写后再走一发 LLM 调通顺）">
+        <Field label="启用润色">
+          <input
+            type="checkbox"
+            checked={draft.stylist_enabled}
+            onChange={(e) => patch("stylist_enabled", e.target.checked)}
+          />
+        </Field>
+        <Field label="风格">
+          <select
+            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300"
+            value={draft.stylist_persona}
+            onChange={(e) => patch("stylist_persona", e.target.value as AppConfig["stylist_persona"])}
+            disabled={!draft.stylist_enabled}
+          >
+            <option value="friendly">友好口语 · 通顺自然</option>
+            <option value="formal">正式书面 · 邮件/商务腔</option>
+            <option value="mixed_zh_en">中英混说 · 保留英文术语</option>
+          </select>
+        </Field>
+        <Field label="润色模型">
+          <input
+            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-48"
+            value={draft.stylist_model}
+            onChange={(e) => patch("stylist_model", e.target.value)}
+            placeholder="qwen-turbo"
+            disabled={!draft.stylist_enabled}
+          />
+        </Field>
+        <div className="text-xs text-ink-400 leading-relaxed">
+          润色失败（网络/超时 8s）会自动用原文，不会卡插入。短于 4 字的转写跳过润色省 token。
+        </div>
+      </Section>
+
       <div className="flex items-center gap-3 pt-2">
         <button
           className="px-4 py-2 rounded-md bg-ink-900 text-white text-sm hover:bg-ink-700 disabled:opacity-50"
@@ -323,6 +430,7 @@ function phaseLabel(p: string): string {
     recording: "录音中…",
     stopping: "结束录音…",
     transcribing: "转写中…",
+    polishing: "润色中…",
     inserting: "插入到光标…",
     done: "完成",
     failed: "失败",

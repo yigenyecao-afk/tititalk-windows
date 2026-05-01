@@ -71,13 +71,41 @@ jobs:
           # 顺手 emit 一份机器可读 metadata.json，给 publish 脚本 / windows-latest.json 用
           @{ name = $exe.Name; sha256 = $hash; size_bytes = $size; version = '${{ github.ref_name }}' } | ConvertTo-Json | Out-File -FilePath release/metadata.json -Encoding utf8
 
+          # —— Tauri updater 格式 windows-update.json ——
+          # tauri build 在签名密钥设了的情况下会顺便生成 *.exe.sig（minisign）。
+          # updater 协议需要：version / notes / pub_date / platforms.windows-x86_64.{signature,url}
+          # 这里 url 写最终的 tititalk.com versioned 路径（publish 脚本 scp 到的位置）。
+          $sig = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter "*.exe.sig" -Recurse | Select-Object -First 1
+          if ($sig) {
+            Copy-Item $sig.FullName -Destination release/
+            $sigContent = Get-Content $sig.FullName -Raw
+            $version = '${{ github.ref_name }}' -replace '^v',''
+            $serverName = "TiTiTalk-windows-$version-setup.exe"
+            $update = @{
+              version = $version
+              notes = "TiTiTalk Windows v$version"
+              pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+              platforms = @{
+                "windows-x86_64" = @{
+                  signature = $sigContent
+                  url = "https://tititalk.com/downloads/$serverName"
+                }
+              }
+            }
+            $update | ConvertTo-Json -Depth 5 | Out-File -FilePath release/windows-update.json -Encoding utf8
+          } else {
+            Write-Warning "no .exe.sig produced — TAURI_SIGNING_PRIVATE_KEY 未生效；updater 该版本不可用"
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: tititalk-windows-installer
           path: |
             release/*.exe
+            release/*.exe.sig
             release/SHA256SUMS.txt
             release/metadata.json
+            release/windows-update.json
 
       - name: Publish to release (on tag)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -85,5 +113,7 @@ jobs:
         with:
           files: |
             release/*.exe
+            release/*.exe.sig
             release/SHA256SUMS.txt
+            release/windows-update.json
           generate_release_notes: true

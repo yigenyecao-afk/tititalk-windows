@@ -5,6 +5,7 @@ mod hotkey;
 mod insertion;
 mod pill;
 mod state;
+mod stylist;
 mod tray;
 
 use std::sync::Arc;
@@ -25,6 +26,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_state.clone())
         .invoke_handler(tauri::generate_handler![
             cmd_get_config,

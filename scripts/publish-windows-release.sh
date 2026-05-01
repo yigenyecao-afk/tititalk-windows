@@ -32,7 +32,11 @@ SERVER="root@43.106.48.21"
 SERVER_DOWNLOADS="/opt/tititalk-site/storage/downloads"
 LOCAL_DIR="$HOME/Downloads/tititalk-windows-installer"
 EXE_NAME="TiTiTalk_${VERSION}_x64-setup.exe"
+SIG_NAME="${EXE_NAME}.sig"
+UPDATE_JSON_NAME="windows-update.json"
 LOCAL_EXE="$LOCAL_DIR/$EXE_NAME"
+LOCAL_SIG="$LOCAL_DIR/$SIG_NAME"
+LOCAL_UPDATE_JSON="$LOCAL_DIR/$UPDATE_JSON_NAME"
 
 # 1. 拿 .exe —— 优先 local 缓存，没有就从 GH Release 下
 if [[ ! -f "$LOCAL_EXE" ]]; then
@@ -45,6 +49,17 @@ if [[ ! -f "$LOCAL_EXE" ]]; then
         echo "❌ Release v$VERSION 没找到 $EXE_NAME — 等 GHA 的 release-attach step 跑完？" >&2
         exit 1
     fi
+fi
+
+# 1b. 拿 .sig + windows-update.json（updater 必需，没有则只发 .exe + 警告）
+if [[ ! -f "$LOCAL_SIG" ]]; then
+    echo "==> 本地无 $SIG_NAME，尝试从 GH Release 拉…"
+    gh release download "v$VERSION" --repo yigenyecao-afk/tititalk-windows \
+        -p "$SIG_NAME" -O "$LOCAL_SIG" 2>/dev/null || true
+fi
+if [[ ! -f "$LOCAL_UPDATE_JSON" ]]; then
+    gh release download "v$VERSION" --repo yigenyecao-afk/tititalk-windows \
+        -p "$UPDATE_JSON_NAME" -O "$LOCAL_UPDATE_JSON" 2>/dev/null || true
 fi
 
 # 2. 校验 SHA256（如果 metadata.json 存在）
@@ -65,8 +80,23 @@ echo "==> 上传 $EXE_NAME ($SIZE_BYTES bytes, sha=${SHA256:0:12}…)"
 
 # 3. 上传到服务器，原子换 symlink + chmod 644
 SERVER_EXE_NAME="TiTiTalk-windows-${VERSION}-setup.exe"
+SERVER_SIG_NAME="${SERVER_EXE_NAME}.sig"
 scp -q "$LOCAL_EXE" "$SERVER:$SERVER_DOWNLOADS/$SERVER_EXE_NAME"
 ssh "$SERVER" "ln -sfn $SERVER_EXE_NAME $SERVER_DOWNLOADS/TiTiTalk-windows-latest.exe.new && mv -f $SERVER_DOWNLOADS/TiTiTalk-windows-latest.exe.new $SERVER_DOWNLOADS/TiTiTalk-windows-latest.exe && chmod 644 $SERVER_DOWNLOADS/$SERVER_EXE_NAME"
+
+# 3b. 上传 .sig + windows-update.json（updater 闭环；缺则跳过 + 警告）
+if [[ -f "$LOCAL_SIG" ]]; then
+    scp -q "$LOCAL_SIG" "$SERVER:$SERVER_DOWNLOADS/$SERVER_SIG_NAME"
+    ssh "$SERVER" "chmod 644 $SERVER_DOWNLOADS/$SERVER_SIG_NAME"
+else
+    echo "⚠️  无 $SIG_NAME，跳过 updater 通道（用户不会收到自动更新）"
+fi
+if [[ -f "$LOCAL_UPDATE_JSON" ]]; then
+    scp -q "$LOCAL_UPDATE_JSON" "$SERVER:$SERVER_DOWNLOADS/windows-update.json.new"
+    ssh "$SERVER" "mv -f $SERVER_DOWNLOADS/windows-update.json.new $SERVER_DOWNLOADS/windows-update.json && chmod 644 $SERVER_DOWNLOADS/windows-update.json"
+else
+    echo "⚠️  无 windows-update.json，跳过 updater 元数据更新"
+fi
 
 # 4. 生成 windows-latest.json + 上传
 RELEASED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -93,4 +123,5 @@ echo "✅ Published TiTiTalk Windows $VERSION"
 echo "   EXE     → https://tititalk.com/downloads/$SERVER_EXE_NAME"
 echo "   latest  → https://tititalk.com/downloads/TiTiTalk-windows-latest.exe"
 echo "   meta    → https://tititalk.com/downloads/windows-latest.json"
+echo "   updater → https://tititalk.com/downloads/windows-update.json"
 echo "   sha256  → $SHA256"

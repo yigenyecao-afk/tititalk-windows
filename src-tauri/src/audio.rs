@@ -24,6 +24,7 @@ use tokio::sync::oneshot;
 use crate::asr;
 use crate::insertion;
 use crate::state::{AppState, PipelineEvent, PipelinePhase};
+use crate::stylist;
 
 const TARGET_SR: u32 = 16_000;
 const MAX_DURATION_SECS: f32 = 60.0;
@@ -129,7 +130,7 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     state.set_phase(PipelinePhase::Transcribing);
 
     let cfg = state.config.read().clone();
-    let text = match asr::transcribe(&cfg, &captured).await {
+    let raw = match asr::transcribe(&cfg, &captured).await {
         Ok(t) => t,
         Err(e) => {
             state.set_phase(PipelinePhase::Failed);
@@ -138,10 +139,33 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
         }
     };
 
-    if text.trim().is_empty() {
+    if raw.trim().is_empty() {
         state.set_phase(PipelinePhase::Done);
         return;
     }
+
+    // Stylist post-processing — opt-in. Failure falls back to raw with a warning,
+    // never blocks insertion (paste must always happen on the user's gesture).
+    let text = if cfg.stylist_enabled {
+        state.set_phase(PipelinePhase::Polishing);
+        match stylist::polish(&cfg, &raw).await {
+            Ok(p) if !p.trim().is_empty() => p,
+            Ok(_) => {
+                log::warn!("stylist returned empty; falling back to raw");
+                raw.clone()
+            }
+            Err(e) => {
+                log::warn!("stylist failed, using raw: {e}");
+                state.emit(PipelineEvent::Error {
+                    message: format!("润色失败，已用原文：{e}"),
+                });
+                raw.clone()
+            }
+        }
+    } else {
+        raw.clone()
+    };
+
     state.emit(PipelineEvent::Transcript { text: text.clone() });
 
     if cfg.auto_insert {

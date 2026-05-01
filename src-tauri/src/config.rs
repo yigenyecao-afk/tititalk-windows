@@ -32,6 +32,16 @@ pub struct AppConfig {
     /// User-installed dictionary terms (passed to ASR as biasing prompt).
     #[serde(default)]
     pub dictionary: Vec<String>,
+    /// Stylist post-processing: feed transcript through chat-completion with persona prompt
+    /// before insertion. Default off (raw ASR), user opts in.
+    #[serde(default = "no")]
+    pub stylist_enabled: bool,
+    /// Persona key: "friendly" (default), "formal", "mixed_zh_en". Unknown → friendly.
+    #[serde(default = "default_persona")]
+    pub stylist_persona: String,
+    /// Stylist model. Defaults to qwen-turbo for speed; user can switch to qwen-plus.
+    #[serde(default = "default_stylist_model")]
+    pub stylist_model: String,
 }
 
 fn default_engine() -> String { "qwen".into() }
@@ -39,6 +49,8 @@ fn default_model() -> String { "qwen3-asr-flash".into() }
 fn default_lang() -> String { "zh".into() }
 fn default_hotkey() -> u32 { 0x70 } // VK_F1
 fn default_min_hold_ms() -> u32 { 150 }
+fn default_persona() -> String { "friendly".into() }
+fn default_stylist_model() -> String { "qwen-turbo".into() }
 fn yes() -> bool { true }
 fn no() -> bool { false }
 
@@ -54,6 +66,9 @@ impl Default for AppConfig {
             min_hold_ms: default_min_hold_ms(),
             also_copy: false,
             dictionary: vec![],
+            stylist_enabled: false,
+            stylist_persona: default_persona(),
+            stylist_model: default_stylist_model(),
         }
     }
 }

@@ -57,6 +57,7 @@ function renderState(phase: PipelinePhase): { color: string; label: string } {
     case "recording":     return { color: "#ef4444", label: "录音中…" };
     case "stopping":      return { color: "#f59e0b", label: "结束…" };
     case "transcribing":  return { color: "#3b82f6", label: "转写中…" };
+    case "polishing":     return { color: "#8b5cf6", label: "润色中…" };
     case "inserting":     return { color: "#22c55e", label: "插入…" };
     case "done":          return { color: "#22c55e", label: "完成" };
     case "failed":        return { color: "#ef4444", label: "失败" };

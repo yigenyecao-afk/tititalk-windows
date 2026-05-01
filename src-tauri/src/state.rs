@@ -7,7 +7,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::audio::CapturedAudio;
 use crate::config::{load_config, save_config, AppConfig};
 
-/// Where in the record→ASR→insert pipeline we currently are.
+/// Where in the record→ASR→(polish→)insert pipeline we currently are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PipelinePhase {
@@ -15,6 +15,7 @@ pub enum PipelinePhase {
     Recording,
     Stopping,
     Transcribing,
+    Polishing,
     Inserting,
     Done,
     Failed,

@@ -18,7 +18,10 @@ pub async fn on_pipeline_event(handle: &AppHandle, _state: &Arc<AppState>, ev: &
     match ev {
         PipelineEvent::Phase { phase } => {
             match phase {
-                PipelinePhase::Recording | PipelinePhase::Transcribing | PipelinePhase::Inserting => {
+                PipelinePhase::Recording
+                | PipelinePhase::Transcribing
+                | PipelinePhase::Polishing
+                | PipelinePhase::Inserting => {
                     let _ = position_near_cursor(&pill);
                     let _ = pill.show();
                 }

@@ -10,13 +10,19 @@ export interface AppConfig {
   min_hold_ms: number;
   also_copy: boolean;
   dictionary: string[];
+  stylist_enabled: boolean;
+  stylist_persona: StylistPersona;
+  stylist_model: string;
 }
+
+export type StylistPersona = "friendly" | "formal" | "mixed_zh_en";
 
 export type PipelinePhase =
   | "idle"
   | "recording"
   | "stopping"
   | "transcribing"
+  | "polishing"
   | "inserting"
   | "done"
   | "failed";
