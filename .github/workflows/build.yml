@@ -44,8 +44,12 @@ jobs:
       - name: Tauri build (NSIS .exe)
         run: pnpm exec tauri build --bundles nsis
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          # Tauri updater 签名 —— 私钥用 minisign 格式存在 GitHub Secrets，
+          # 跟 macOS 端 Sparkle EdDSA 一个套路。私钥本机备份在
+          # ~/.tauri/tititalk-windows.key（不在 repo）。空密码也要传，否则
+          # tauri-cli 会回落到提示密码并卡死 CI。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Collect artifacts
         shell: pwsh

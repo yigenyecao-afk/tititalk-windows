@@ -72,5 +72,15 @@
         "type": "downloadBootstrapper"
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "active": false,
+      "endpoints": [
+        "https://tititalk.com/downloads/windows-latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlENDhERkZDODRBNkE2RjcKUldUM3BxYUUvTjlJblZRaER1TXptMzhBaCtwbkU1NzN3WXlxekNMUGM0R3VkY3lvcHZ1SkQ2aGcK"
+    }
   }
 }
