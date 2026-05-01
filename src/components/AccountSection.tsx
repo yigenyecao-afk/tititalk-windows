@@ -2,18 +2,27 @@
 // states (unauthenticated / authenticating / authenticated / error)
 // and the same panels (plan badge / license row / quota bar / devices).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  billingCheckout,
+  billingGetOrder,
   fmtCents,
   getAccountState,
+  getBillingPlans,
   getDevices,
   logout,
   onAccountState,
+  openPayUrl,
+  reloadMe,
   startLogin,
   unbindDevice,
   type AccountSnapshot,
+  type CheckoutResp,
   type DeviceInfo,
   type LicenseInfo,
+  type OrderInfo,
+  type PlanInfo,
+  type PlansCatalog,
   type QuotaInfo,
   type User,
 } from "../lib/account";
@@ -224,7 +233,7 @@ function AuthenticatedView({
       {license && <LicenseRow lic={license} />}
       {quota && <QuotaBar q={quota} />}
 
-      <UpgradeCard user={user} />
+      <UpgradeCard />
 
       {devices && devices.length > 0 && (
         <div>
@@ -291,57 +300,278 @@ function PlanBadge({ plan }: { plan: string }) {
   );
 }
 
-function UpgradeCard({ user }: { user: User }) {
-  // 全已购：年订 + 旗舰 + 解锁包 = 不显示 upsell。
-  const hasMembership = user.plan === "pro_annual" || user.plan === "pro_flagship" || user.plan === "pro_lifetime";
-  const hasUnlock = !!user.pro_unlocked_at;
-  if (hasMembership && hasUnlock) return null;
+/**
+ * 完全 server-driven UpgradeCard. 拉 /api/billing/plans 拿目录 + 当前用户
+ * ownership，渲染购买行；点行触发 checkout (POST /api/billing/checkout) →
+ * 打开浏览器扫码 → 启动 2s 轮询 /api/billing/orders/{id} → 看到 paid 拉
+ * /me + license + quota 全刷一次。
+ *
+ * 客户端零硬编码 plan / 价格 / 文案 — 服务端 PLAN_META 改完客户端下次
+ * 启动直接拿。
+ */
+function UpgradeCard() {
+  const [catalog, setCatalog] = useState<PlansCatalog | null>(null);
+  const [loadErr, setLoadErr] = useState<string>("");
+  const [pending, setPending] = useState<{
+    order: CheckoutResp;
+    status: OrderInfo["status"];
+    startedAt: number;
+  } | null>(null);
+  const [payErr, setPayErr] = useState<string>("");
+  const pollRef = useRef<number | null>(null);
+
+  // Pull catalog on mount + whenever account state changes upstream.
+  useEffect(() => {
+    let cancelled = false;
+    getBillingPlans()
+      .then((c) => { if (!cancelled) setCatalog(c); })
+      .catch((e) => { if (!cancelled) setLoadErr(String(e)); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Stop polling on unmount.
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) window.clearInterval(pollRef.current);
+    };
+  }, []);
+
+  const purchasable = catalog
+    ? catalog.plans.filter((p) => !catalog.current_user?.owns.includes(p.code))
+    : [];
+
+  async function handleBuy(plan: PlanInfo) {
+    setPayErr("");
+    try {
+      const order = await billingCheckout(plan.code);
+      setPending({ order, status: "pending", startedAt: Date.now() });
+      try { await openPayUrl(order.pay_url); } catch (e) { console.warn(e); }
+      startPolling(order.order_id);
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes("pro_already_unlocked") || msg.includes("409")) {
+        setPayErr("已解锁专业版，无需重复购买。");
+      } else if (msg.includes("payment_provider")) {
+        setPayErr("支付通道暂时不可用，请稍后重试。");
+      } else {
+        setPayErr("下单失败：" + msg);
+      }
+    }
+  }
+
+  function startPolling(orderId: number) {
+    if (pollRef.current) window.clearInterval(pollRef.current);
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const o = await billingGetOrder(orderId);
+        setPending((cur) => cur ? { ...cur, status: o.status } : cur);
+        if (o.status === "paid") {
+          stopPolling();
+          // Fresh /me + catalog so plan/owns flip in UI immediately.
+          await reloadMe();
+          const fresh = await getBillingPlans();
+          setCatalog(fresh);
+          // Auto-close after 1.5s so user sees the "✓ 已付款" first.
+          window.setTimeout(() => setPending(null), 1500);
+        } else if (o.status === "expired" || o.status === "failed" || o.status === "refunded") {
+          stopPolling();
+        } else if (Date.now() - (pending?.startedAt ?? Date.now()) > 5 * 60_000) {
+          stopPolling();
+          setPayErr("支付超时（5 分钟未确认）。如已付款，请稍后重开应用，或邮件 hi@tititalk.com。");
+        }
+      } catch (e) {
+        // Transient — keep polling. Surface only after sustained failure.
+        console.info("billing poll:", e);
+      }
+    }, 2000) as unknown as number;
+  }
+
+  function stopPolling() {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  if (loadErr && !catalog) {
+    return (
+      <div className="text-xs text-ink-400">升级方案加载失败：{loadErr}</div>
+    );
+  }
+  if (!catalog) {
+    return (
+      <div className="text-xs text-ink-400">加载升级方案…</div>
+    );
+  }
+  if (purchasable.length === 0) {
+    return null;
+  }
+
   return (
-    <div className="rounded border border-ink-200 bg-ink-50 p-3 space-y-2">
-      <div className="text-xs font-medium text-ink-700">解锁更多能力</div>
-      <div className="grid grid-cols-1 gap-2">
-        {user.plan === "free" && (
-          <a
-            href="https://tititalk.com/pricing#annual"
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between rounded bg-white border border-ink-200 px-3 py-2 hover:border-indigo-300 transition"
-          >
-            <div>
-              <div className="text-sm font-medium text-ink-900">年订专业版</div>
-              <div className="text-xs text-ink-500">每日 72k tokens（2 小时）· ¥98 / 年</div>
-            </div>
-            <span className="text-xs text-indigo-700">升级 →</span>
-          </a>
+    <>
+      <div className="rounded border border-ink-200 bg-ink-50 p-3 space-y-2">
+        <div className="text-xs font-medium text-ink-700">解锁更多能力</div>
+        {payErr && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+            {payErr}
+          </div>
         )}
-        {user.plan !== "pro_flagship" && user.plan !== "pro_lifetime" && (
-          <a
-            href="https://tititalk.com/pricing#flagship"
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between rounded bg-white border border-ink-200 px-3 py-2 hover:border-fuchsia-300 transition"
-          >
-            <div>
-              <div className="text-sm font-medium text-ink-900">旗舰版</div>
-              <div className="text-xs text-ink-500">每日 216k tokens（6 小时）· ¥399 / 年</div>
+        <div className="grid grid-cols-1 gap-2">
+          {purchasable.map((p) => (
+            <button
+              key={p.code}
+              onClick={() => handleBuy(p)}
+              disabled={!!pending}
+              className={
+                "flex items-start justify-between rounded bg-white border px-3 py-2.5 text-left hover:border-indigo-300 transition disabled:opacity-50 " +
+                (p.recommended ? "border-indigo-300 bg-indigo-50/40" : "border-ink-200")
+              }
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-medium text-ink-900">{p.title}</span>
+                  {p.recommended && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 text-white font-medium">
+                      推荐
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-ink-500 mt-0.5">{p.subtitle}</div>
+                {p.features.length > 0 && (
+                  <ul className="text-[11px] text-ink-500 mt-1 space-y-0.5">
+                    {p.features.map((f) => <li key={f}>· {f}</li>)}
+                  </ul>
+                )}
+              </div>
+              <div className="text-right ml-2 shrink-0">
+                <div className="text-base font-semibold text-ink-900">
+                  ¥{(p.price_cents / 100).toFixed(0)}
+                </div>
+                <div className="text-[10px] text-indigo-700 mt-0.5">立即升级</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {pending && (
+        <PaymentDialog
+          pending={pending}
+          onClose={() => { stopPolling(); setPending(null); }}
+          onReopen={() => openPayUrl(pending.order.pay_url)}
+          onForceCheck={async () => {
+            try {
+              const o = await billingGetOrder(pending.order.order_id);
+              setPending((cur) => cur ? { ...cur, status: o.status } : cur);
+              if (o.status === "paid") {
+                stopPolling();
+                await reloadMe();
+                const fresh = await getBillingPlans();
+                setCatalog(fresh);
+                window.setTimeout(() => setPending(null), 1500);
+              }
+            } catch (e) {
+              console.warn(e);
+            }
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function PaymentDialog({
+  pending,
+  onClose,
+  onReopen,
+  onForceCheck,
+}: {
+  pending: { order: CheckoutResp; status: OrderInfo["status"]; startedAt: number };
+  onClose: () => void;
+  onReopen: () => void;
+  onForceCheck: () => void;
+}) {
+  const { order, status } = pending;
+  const isPaid = status === "paid";
+  const isFailed = status === "expired" || status === "failed" || status === "refunded";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-lg shadow-xl w-[460px] max-w-[92vw] p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className={
+            "w-9 h-9 rounded-full flex items-center justify-center text-white text-lg " +
+            (isPaid ? "bg-emerald-500" : isFailed ? "bg-red-500" : "bg-indigo-500")
+          }>
+            {isPaid ? "✓" : isFailed ? "!" : "¥"}
+          </div>
+          <div className="flex-1">
+            <div className="font-medium text-ink-900">{order.plan}</div>
+            <div className="text-sm text-ink-500 tabular-nums">
+              ¥{(order.total_fee_cents / 100).toFixed(2)}
             </div>
-            <span className="text-xs text-fuchsia-700">升级 →</span>
-          </a>
-        )}
-        {!hasUnlock && (
-          <a
-            href="https://tititalk.com/pricing#unlock"
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between rounded bg-white border border-ink-200 px-3 py-2 hover:border-amber-300 transition"
-          >
-            <div>
-              <div className="text-sm font-medium text-ink-900">专业解锁包</div>
-              <div className="text-xs text-ink-500">本地 Whisper + BYOK 直连 · ¥49 一次性</div>
+          </div>
+          <span className={
+            "text-[10px] px-2 py-0.5 rounded font-medium " +
+            (isPaid
+              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+              : isFailed
+                ? "bg-red-50 text-red-700 border border-red-200"
+                : "bg-amber-50 text-amber-700 border border-amber-200")
+          }>
+            {status === "pending" ? "等待支付" : status === "paid" ? "已付款" : status}
+          </span>
+        </div>
+
+        <div className="border-t border-ink-100 pt-3">
+          {status === "pending" && (
+            <>
+              <div className="text-sm text-ink-700">
+                已在浏览器打开微信 / 支付宝扫码页 — 完成付款后这里会自动确认。
+              </div>
+              <div className="text-xs text-ink-500 mt-2 leading-relaxed">
+                订单 1 小时有效。付完款 2-5 秒内会自动检测；如果一直没动静，按「立即检查」。
+              </div>
+            </>
+          )}
+          {isPaid && (
+            <div className="text-sm text-emerald-700">
+              支付成功 — 已为你刷新 plan / 解锁状态。
             </div>
-            <span className="text-xs text-amber-700">解锁 →</span>
-          </a>
-        )}
+          )}
+          {isFailed && (
+            <div className="text-sm text-red-700">
+              订单未完成（{status}）。请重新发起，或联系 hi@tititalk.com。
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          {status === "pending" ? (
+            <>
+              <button
+                className="px-3 py-1.5 rounded border border-ink-300 text-sm hover:bg-ink-50"
+                onClick={onClose}
+              >取消</button>
+              <div className="flex-1" />
+              <button
+                className="px-3 py-1.5 rounded border border-ink-300 text-sm hover:bg-ink-50"
+                onClick={onReopen}
+              >重新打开支付页</button>
+              <button
+                className="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700"
+                onClick={onForceCheck}
+              >已付款，立即检查</button>
+            </>
+          ) : (
+            <>
+              <div className="flex-1" />
+              <button
+                className="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700"
+                onClick={onClose}
+              >{isPaid ? "完成" : "关闭"}</button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

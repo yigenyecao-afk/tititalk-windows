@@ -78,10 +78,79 @@ export interface ConflictPayload {
 
 export type ConflictAction = "keep_local" | "use_cloud" | "merge";
 
+// --- billing types ------------------------------------------------------
+
+export interface PlanInfo {
+  code: string;                   // "pro_annual" | "pro_flagship" | "pro_unlock" | future
+  kind: "membership" | "pro_unlock";
+  title: string;                  // short title for the upgrade card
+  title_long: string;
+  subtitle: string;
+  price_cents: number;
+  currency: string;
+  duration_days: number | null;
+  quota_tokens: number | null;
+  features: string[];
+  recommended: boolean;
+  sort_order: number;
+}
+
+export interface CurrentUserOwnership {
+  plan: string;
+  pro_unlocked: boolean;
+  owns: string[];                 // subset of {"pro_annual","pro_flagship","pro_unlock"}
+}
+
+export interface PlansCatalog {
+  plans: PlanInfo[];
+  currency: string;
+  current_user: CurrentUserOwnership | null;
+}
+
+export interface CheckoutResp {
+  order_id: number;
+  trade_order_id: string;
+  pay_url: string;
+  qr_url: string | null;
+  total_fee_cents: number;
+  plan: string;
+}
+
+export interface OrderInfo {
+  id: number;
+  plan: string;
+  status: "pending" | "paid" | "refunded" | "expired" | "failed";
+  amount_cents: number;
+  currency: string;
+  paid_at: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
 // --- commands -----------------------------------------------------------
 
 export async function startLogin(): Promise<void> {
   await invoke("cmd_account_login_start");
+}
+
+export async function getBillingPlans(): Promise<PlansCatalog> {
+  return await invoke<PlansCatalog>("cmd_billing_get_plans");
+}
+
+export async function billingCheckout(plan: string): Promise<CheckoutResp> {
+  return await invoke<CheckoutResp>("cmd_billing_checkout", { plan });
+}
+
+export async function billingGetOrder(orderId: number): Promise<OrderInfo> {
+  return await invoke<OrderInfo>("cmd_billing_get_order", { orderId });
+}
+
+export async function openPayUrl(url: string): Promise<void> {
+  await invoke("cmd_billing_open_url", { url });
+}
+
+export async function reloadMe(): Promise<void> {
+  await invoke("cmd_account_reload_me");
 }
 
 export async function logout(): Promise<void> {

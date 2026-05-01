@@ -8,6 +8,7 @@
 
 pub mod api_client;
 pub mod auth;
+pub mod billing;
 pub mod keystore;
 pub mod license;
 pub mod sync;
@@ -426,6 +427,35 @@ impl Account {
             tauri::async_runtime::spawn(async move {
                 auth::logout_remote(&api, &r).await;
             });
+        }
+    }
+
+    /// Pull the public plan/feature catalog. Used by the upgrade UI to
+    /// avoid hardcoding plan codes / prices / features in the client.
+    pub async fn fetch_plans(&self) -> Result<billing::PlansCatalog, String> {
+        billing::fetch_plans(&self.api).await.map_err(|e| e.to_string())
+    }
+
+    /// Place a checkout order — server returns pay_url that the UI opens
+    /// in the user's browser; UI then polls `get_order` for status.
+    pub async fn billing_checkout(&self, plan: &str) -> Result<billing::CheckoutResp, String> {
+        billing::checkout(&self.api, plan).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn billing_get_order(&self, order_id: i64) -> Result<billing::OrderInfo, String> {
+        billing::get_order(&self.api, order_id).await.map_err(|e| e.to_string())
+    }
+
+    /// Refresh /me after a successful checkout so plan/pro_unlocked_at flip
+    /// in the UI immediately. Mirrors `loadMe()` on macOS.
+    pub async fn reload_me(&self) -> Result<(), String> {
+        match auth::fetch_me(&self.api).await {
+            Ok(user) => {
+                self.inner.write().state = AuthState::Authenticated { user };
+                self.emit_state();
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
         }
     }
 

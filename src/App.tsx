@@ -16,7 +16,7 @@ import {
   type AccountSnapshot,
 } from "./lib/account";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 type Tab = "home" | "settings" | "history" | "about";
 

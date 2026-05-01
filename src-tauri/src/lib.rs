@@ -44,6 +44,11 @@ pub fn run() {
             cmd_account_resolve_conflict,
             cmd_account_get_devices,
             cmd_account_unbind_device,
+            cmd_billing_get_plans,
+            cmd_billing_checkout,
+            cmd_billing_get_order,
+            cmd_billing_open_url,
+            cmd_account_reload_me,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -225,4 +230,69 @@ async fn cmd_account_unbind_device(
 ) -> Result<(), String> {
     let acc = account_handle(&state)?;
     acc.unbind_device(device_id).await
+}
+
+#[tauri::command]
+async fn cmd_billing_get_plans(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<account::billing::PlansCatalog, String> {
+    let acc = account_handle(&state)?;
+    acc.fetch_plans().await
+}
+
+#[tauri::command]
+async fn cmd_billing_checkout(
+    state: tauri::State<'_, Arc<AppState>>,
+    plan: String,
+) -> Result<account::billing::CheckoutResp, String> {
+    let acc = account_handle(&state)?;
+    acc.billing_checkout(&plan).await
+}
+
+#[tauri::command]
+async fn cmd_billing_get_order(
+    state: tauri::State<'_, Arc<AppState>>,
+    order_id: i64,
+) -> Result<account::billing::OrderInfo, String> {
+    let acc = account_handle(&state)?;
+    acc.billing_get_order(order_id).await
+}
+
+/// Open the pay URL in the user's default browser. Tauri 2 doesn't bundle a
+/// generic `open` API by default; we shell out to `cmd /c start`. URLs are
+/// validated server-side (虎皮椒 host) but we still sanitise to avoid
+/// arbitrary process exec.
+#[tauri::command]
+fn cmd_billing_open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("only https:// URLs allowed".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        Command::new("open").arg(&url).spawn().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = url;
+        Err("unsupported platform".into())
+    }
+}
+
+#[tauri::command]
+async fn cmd_account_reload_me(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let acc = account_handle(&state)?;
+    acc.reload_me().await
 }
