@@ -4,6 +4,7 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::account::Account;
 use crate::audio::CapturedAudio;
 use crate::config::{load_config, save_config, AppConfig};
 
@@ -36,6 +37,9 @@ pub struct AppState {
     pub event_tx: UnboundedSender<PipelineEvent>,
     pub current_audio: RwLock<Option<CapturedAudio>>,
     pub phase: RwLock<PipelinePhase>,
+    /// Set in `lib.rs::setup` once the Tauri AppHandle is available.
+    /// `None` until then (and in headless tests).
+    pub account: RwLock<Option<Account>>,
 }
 
 impl AppState {
@@ -45,6 +49,7 @@ impl AppState {
             event_tx,
             current_audio: RwLock::new(None),
             phase: RwLock::new(PipelinePhase::Idle),
+            account: RwLock::new(None),
         }
     }
 
