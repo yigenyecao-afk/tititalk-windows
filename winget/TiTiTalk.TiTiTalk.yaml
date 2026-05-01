@@ -1,0 +1,6 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+PackageIdentifier: TiTiTalk.TiTiTalk
+PackageVersion: 0.0.0  # 提交前替换成 release tag 去掉 v 前缀
+DefaultLocale: zh-CN
+ManifestType: version
+ManifestVersion: 1.6.0

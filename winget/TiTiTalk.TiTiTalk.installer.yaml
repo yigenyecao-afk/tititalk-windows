@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+# Filled by scripts/winget-prepare.sh post-release. Do NOT commit a populated
+# version with real SHA + URL — keep this file as the master template.
+PackageIdentifier: TiTiTalk.TiTiTalk
+PackageVersion: 0.0.0  # 提交前替换成 release tag 去掉 v 前缀
+InstallerLocale: zh-CN
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.17763.0  # Windows 10 1809 — 跟 README 系统要求一致
+InstallerType: nullsoft  # NSIS
+Scope: user  # 跟 tauri.conf.json `installMode: currentUser` 一致
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+Commands:
+  - tititalk
+ReleaseDate: 0000-00-00  # YYYY-MM-DD，提交前填
+Installers:
+  - Architecture: x64
+    InstallerUrl: PLACEHOLDER_INSTALLER_URL
+    InstallerSha256: PLACEHOLDER_SHA256
+ManifestType: installer
+ManifestVersion: 1.6.0

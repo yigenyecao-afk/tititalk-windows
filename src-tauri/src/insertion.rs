@@ -19,7 +19,7 @@ use windows::Win32::{
     },
     UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-        VIRTUAL_KEY, VK_CONTROL, VK_V,
+        VK_CONTROL, VK_V,
     },
 };
 

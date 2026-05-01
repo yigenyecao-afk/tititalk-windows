@@ -91,7 +91,12 @@ fn cmd_save_config(
 
 #[tauri::command]
 async fn cmd_test_asr(state: tauri::State<'_, Arc<AppState>>) -> Result<String, String> {
-    asr::test_credentials(&state.config.read().clone())
+    // (fix) parking_lot 的 RwLockReadGuard 不是 Send；以前写法
+    // `&state.config.read().clone()` 会让 guard 活到整个表达式结束，
+    // 包括跨过 .await，导致整个 future 不 Send → tauri::generate_handler!
+    // 编译失败。先 clone 进 owned 值再让 guard 立即 drop，再 .await。
+    let cfg = state.config.read().clone();
+    asr::test_credentials(&cfg)
         .await
         .map_err(|e| e.to_string())
 }

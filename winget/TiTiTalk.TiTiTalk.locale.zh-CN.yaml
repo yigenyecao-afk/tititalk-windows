@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: TiTiTalk.TiTiTalk
+PackageVersion: 0.0.0  # 提交前替换
+PackageLocale: zh-CN
+Publisher: TiTiTalk
+PublisherUrl: https://tititalk.com
+PublisherSupportUrl: https://github.com/yigenyecao-afk/tititalk-windows/issues
+Author: TiTiTalk
+PackageName: TiTiTalk
+PackageUrl: https://tititalk.com
+License: MIT
+LicenseUrl: https://github.com/yigenyecao-afk/tititalk-windows/blob/main/LICENSE
+Copyright: Copyright (c) 2026 TiTiTalk
+ShortDescription: 按住快捷键说话 · 松开自动转写到光标处的语音输入法
+Description: |-
+  TiTiTalk Windows · 桌面级语音输入法。按住 F1 说话，松开自动转写并粘贴到当前光标。
+  微信、邮件、IDE、Notion、Slack 全都能用。Mac 端 TiTiTalk 的同门兄弟。
+
+  v0.1.0 范围（Slice 1）：
+    • 全局热键按住说话
+    • WASAPI 音频采集
+    • 百炼 Qwen / OpenAI Whisper 云端 ASR
+    • 文字注入到任意输入框
+    • 透明悬浮 Pill 状态指示
+
+  系统要求：Windows 10 1809+ / Windows 11 / x64 / 麦克风权限。
+Moniker: tititalk
+Tags:
+  - voice
+  - speech-to-text
+  - dictation
+  - asr
+  - whisper
+  - qwen
+  - 语音输入
+  - 语音识别
+  - 听写
+ReleaseNotesUrl: https://github.com/yigenyecao-afk/tititalk-windows/releases
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
