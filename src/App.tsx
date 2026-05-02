@@ -82,11 +82,24 @@ export default function App() {
         setRecent((r) => [{ at: new Date().toISOString(), text: ev.text }, ...r].slice(0, 50));
         setStatusLine("已转写：" + ev.text.slice(0, 30));
         setUpgrade(null); // success — clear any stale upgrade banner
+        // (v0.7.5 lastError-stale fix) transcript 成功也清 lastError —— 跟 Mac
+        // 2.10.25 同源 fix。原版 lastError 只在 phase=recording 清，但用户做完
+        // 一次失败后停顿不立即录下一段，banner 永久挂着「润色超时」之类旧文。
+        // 一次成功 transcript 是「上一次的烦恼已过去」最强信号。
+        setLastError("");
       } else if (ev.kind === "error") {
         setStatusLine("错误：" + ev.message);
         setLastError(ev.message);
         const reason = detectUpgradeReason(ev.message);
         if (reason) setUpgrade(reason);
+        // (v0.7.5 lastError-stale fix) error banner 8s 自动消，跟 Mac 2.10.25
+        // scheduleErrorAutoClear 同口径。用户没立即录下一段也别让红色文案挂着。
+        // 新 error 来时旧 timeout 仍然 fire 但 setLastError(cur=>...) 用最新值
+        // 比对，旧 timeout 不会误清新错误。
+        const errMsg = ev.message;
+        window.setTimeout(() => {
+          setLastError((cur) => (cur === errMsg ? "" : cur));
+        }, 8000);
       } else if (ev.kind === "notice") {
         setNotice(ev.message);
         setStatusLine(ev.message);
