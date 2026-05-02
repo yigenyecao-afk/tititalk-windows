@@ -10,7 +10,6 @@ import {
   onPipeline,
   openMicSettings,
   saveConfig,
-  testAsr,
   VK_CHOICES,
 } from "./lib/api";
 import type { AppConfig, PipelineEvent, PipelinePhase } from "./lib/types";
@@ -20,8 +19,10 @@ import {
   restart,
   type UpdateStatus,
 } from "./lib/updater";
-import AccountSection from "./components/AccountSection";
 import ConflictDialog from "./components/ConflictDialog";
+import SettingsSheet from "./components/SettingsSheet";
+import AccountSheet from "./components/AccountSheet";
+import HistoryQuotaBanner from "./components/HistoryQuotaBanner";
 import {
   getAccountState,
   isProUnlocked,
@@ -30,10 +31,14 @@ import {
   type AccountSnapshot,
 } from "./lib/account";
 
-type Tab = "home" | "settings" | "history" | "about";
+/// (v0.7.5) Typeless 风 IA — 侧栏只 2 项核心入口（首页/历史），
+/// 账户/设置/帮助沉到侧栏底部 toolbar 弹 sheet。
+type Tab = "home" | "history";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("home");
+  const [showSettings, setShowSettings] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [recent, setRecent] = useState<{ at: string; text: string }[]>([]);
   const [statusLine, setStatusLine] = useState<string>("准备中");
@@ -78,6 +83,9 @@ export default function App() {
         if (ev.phase === "recording") {
           setLastError("");
         }
+      } else if (ev.kind === "partial") {
+        // (v0.7.6) 流式 ASR 进行中文本 — 顶部状态条实时显示，跟 pill 跑马灯一致
+        setStatusLine("识别中：" + ev.text.slice(0, 30));
       } else if (ev.kind === "transcript") {
         setRecent((r) => [{ at: new Date().toISOString(), text: ev.text }, ...r].slice(0, 50));
         setStatusLine("已转写：" + ev.text.slice(0, 30));
@@ -159,18 +167,24 @@ export default function App() {
       <ConflictDialog />
       <NoticeToast message={notice} />
       <div className="flex-1 flex">
-      <aside className="w-56 shrink-0 border-r border-ink-200 bg-white">
-        <div className="px-5 pt-5 pb-3">
-          <div className="text-lg font-semibold text-ink-900">TiTiTalk</div>
-          <div className="text-xs text-ink-400">Windows · v{version || "…"}</div>
+      <aside className="w-56 shrink-0 border-r border-ink-200 bg-white flex flex-col">
+        {/* 品牌头：logo + 名字 + plan chip */}
+        <div className="px-5 pt-5 pb-3 flex items-center gap-2">
+          <span className="text-base">
+            <span className="bg-gradient-to-br from-indigo-500 to-pink-500 bg-clip-text text-transparent font-extrabold">●</span>
+          </span>
+          <span className="text-base font-bold text-ink-900">TiTiTalk</span>
+          <span className="ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-ink-100 text-ink-500">
+            {planChip(account)}
+          </span>
         </div>
-        <nav className="px-2 mt-2 space-y-1">
+        <nav className="px-2 mt-1 space-y-1 flex-1">
           <NavBtn active={tab === "home"} onClick={() => setTab("home")}>首页</NavBtn>
-          <NavBtn active={tab === "settings"} onClick={() => setTab("settings")}>设置</NavBtn>
-          <NavBtn active={tab === "history"} onClick={() => setTab("history")}>历史</NavBtn>
-          <NavBtn active={tab === "about"} onClick={() => setTab("about")}>关于</NavBtn>
+          <NavBtn active={tab === "history"} onClick={() => setTab("history")}>历史记录</NavBtn>
         </nav>
-        <div className="absolute bottom-3 left-3 right-3 px-2">
+
+        {/* 状态指示器 */}
+        <div className="px-3 pb-2">
           <div className={"flex items-center gap-1.5 text-[11px] " + (
             phase === "recording" ? "text-red-600" :
             phase === "failed" ? "text-red-500" :
@@ -186,34 +200,91 @@ export default function App() {
             <span className="truncate">{statusLine}</span>
           </div>
         </div>
+
+        {/* 底部 icon-only toolbar：账户 / 设置 / 帮助 — 跟 Mac TypelessSettingsSheet 入口对齐 */}
+        <div className="px-3 py-2.5 border-t border-ink-200 bg-ink-50/60 flex items-center gap-3">
+          <SidebarIconBtn
+            icon="👤"
+            tooltip="账户与计费"
+            onClick={() => setShowAccount(true)}
+          />
+          <SidebarIconBtn
+            icon="⚙"
+            tooltip="设置"
+            onClick={() => setShowSettings(true)}
+          />
+          <SidebarIconBtn
+            icon="?"
+            tooltip="帮助与反馈"
+            onClick={() => window.open("https://tititalk.com/docs", "_blank")}
+          />
+          <span className="ml-auto text-[10px] text-ink-400">v{version || "…"}</span>
+        </div>
       </aside>
-      <main className="flex-1 p-8 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto bg-ink-50/30">
         {tab === "home" && (
-          <HomePane
-            cfg={cfg}
-            account={account}
-            phase={phase}
-            lastError={lastError}
-            onGoSettings={() => setTab("settings")}
-            onGoAccount={() => setTab("settings")}
-            onDismissError={() => setLastError("")}
-          />
+          <div className="p-8">
+            <HomePane
+              cfg={cfg}
+              account={account}
+              phase={phase}
+              lastError={lastError}
+              onGoSettings={() => setShowSettings(true)}
+              onGoAccount={() => setShowAccount(true)}
+              onDismissError={() => setLastError("")}
+            />
+          </div>
         )}
-        {tab === "settings" && (
-          <SettingsPane
-            cfg={cfg}
-            proUnlocked={proUnlocked}
-            onSave={async (next) => {
-              await saveConfig(next);
-              setCfg(next);
-            }}
-          />
+        {tab === "history" && (
+          <div className="flex flex-col h-full">
+            <HistoryQuotaBanner />
+            <div className="flex-1 p-8 overflow-y-auto">
+              <HistoryPane items={recent} onClear={() => setRecent([])} />
+            </div>
+          </div>
         )}
-        {tab === "history" && <HistoryPane items={recent} onClear={() => setRecent([])} />}
-        {tab === "about" && <AboutPane version={version} />}
       </main>
       </div>
+
+      {/* Sheets — 跟 Mac TypelessSettingsSheet / AccountSettingsView 一一对应 */}
+      <SettingsSheet
+        open={showSettings}
+        cfg={cfg}
+        proUnlocked={proUnlocked}
+        onClose={() => setShowSettings(false)}
+        onSave={async (next) => {
+          await saveConfig(next);
+          setCfg(next);
+        }}
+      />
+      <AccountSheet
+        open={showAccount}
+        onClose={() => setShowAccount(false)}
+      />
     </div>
+  );
+}
+
+function planChip(account: AccountSnapshot | null): string {
+  const plan = (account?.license?.plan ?? "free").toLowerCase();
+  if (plan.includes("flagship")) return "旗舰";
+  if (plan.includes("pro"))      return "Pro";
+  return "Free";
+}
+
+function SidebarIconBtn({
+  icon, tooltip, onClick,
+}: { icon: string; tooltip: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={tooltip}
+      aria-label={tooltip}
+      className="w-7 h-7 rounded-md flex items-center justify-center text-ink-500 hover:bg-ink-200 hover:text-ink-800 transition-colors"
+    >
+      <span className="text-[15px] leading-none">{icon}</span>
+    </button>
   );
 }
 
@@ -837,317 +908,6 @@ function Card({ title, body }: { title: string; body: string }) {
   );
 }
 
-function SettingsPane({
-  cfg, proUnlocked, onSave,
-}: { cfg: AppConfig; proUnlocked: boolean; onSave: (next: AppConfig) => Promise<void> }) {
-  const [draft, setDraft] = useState<AppConfig>(cfg);
-  const [saving, setSaving] = useState(false);
-  const [testResult, setTestResult] = useState<string>("");
-
-  function patch<K extends keyof AppConfig>(k: K, v: AppConfig[K]) {
-    // (commercialization) Gate BYOK on pro_unlocked. Snap silently to the
-    // cloud proxy + open the pricing page so user knows why.
-    if (k === "engine" && (v === "qwen" || v === "openai") && !proUnlocked) {
-      window.open("https://tititalk.com/pricing", "_blank");
-      return;
-    }
-    setDraft((d) => ({ ...d, [k]: v }));
-  }
-
-  return (
-    <div className="max-w-2xl space-y-6">
-      <h1 className="text-2xl font-semibold">设置</h1>
-
-      <Section title="语音识别">
-        <Field label="引擎">
-          <select
-            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300"
-            value={draft.engine}
-            onChange={(e) => patch("engine", e.target.value as AppConfig["engine"])}
-          >
-            <option value="tititalk_cloud">TiTiTalk 云端（推荐 · 需登录 · 计平台额度）</option>
-            <option value="qwen">{proUnlocked ? "" : "🔒 "}百炼 Qwen 直连（自带 key · 不计平台额度）</option>
-            <option value="openai">{proUnlocked ? "" : "🔒 "}OpenAI Whisper 直连（自带 key）</option>
-          </select>
-        </Field>
-        {!proUnlocked && (
-          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 flex items-center gap-2">
-            <span>🔒</span>
-            <span className="flex-1">BYOK 直连引擎需要专业解锁包（¥49 一次性，永久解锁）。</span>
-            <a
-              className="text-amber-900 underline hover:no-underline"
-              href="https://tititalk.com/pricing"
-              target="_blank"
-              rel="noreferrer"
-            >去解锁</a>
-          </div>
-        )}
-        {draft.engine !== "tititalk_cloud" && (
-          <>
-            <Field label="模型">
-              <input
-                className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-full"
-                value={draft.model}
-                onChange={(e) => patch("model", e.target.value)}
-                placeholder={draft.engine === "qwen" ? "qwen3-asr-flash" : "whisper-1"}
-              />
-            </Field>
-            <Field label="API key">
-              <input
-                type="password"
-                className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-full"
-                value={draft.api_key}
-                onChange={(e) => patch("api_key", e.target.value)}
-                placeholder={draft.engine === "qwen" ? "sk-xxx（百炼）" : "sk-xxx（OpenAI）"}
-              />
-            </Field>
-          </>
-        )}
-        {draft.engine === "tititalk_cloud" && (
-          <div className="text-xs text-ink-500 leading-relaxed">
-            云端走 tititalk.com 代理，按 0.1 秒说话 = 1 token 计费。免费档每日 18,000 token（30 分钟）；Pro / 旗舰升级看「账号」标签。
-          </div>
-        )}
-        <Field label="语言">
-          <select
-            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300"
-            value={draft.language}
-            onChange={(e) => patch("language", e.target.value)}
-          >
-            <option value="zh">中文</option>
-            <option value="en">英文</option>
-            <option value="auto">自动</option>
-          </select>
-        </Field>
-      </Section>
-
-      <Section title="热键与行为">
-        <Field label="触发键">
-          <select
-            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300"
-            value={draft.hotkey_vk}
-            onChange={(e) => patch("hotkey_vk", parseInt(e.target.value, 10))}
-          >
-            {VK_CHOICES.map((c) => (
-              <option key={c.vk} value={c.vk}>{c.label}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="触发方式">
-          <select
-            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300"
-            value={draft.hotkey_mode}
-            onChange={(e) => patch("hotkey_mode", e.target.value as AppConfig["hotkey_mode"])}
-          >
-            <option value="push_to_talk">按住说话（松手停）</option>
-            <option value="toggle">按一下开 · 再按一下停</option>
-            <option value="hybrid">混合：短按 toggle / 长按 PTT</option>
-          </select>
-        </Field>
-        {draft.hotkey_mode === "push_to_talk" && (
-          <Field label="最小按住时长（ms）">
-            <input
-              type="number"
-              className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-32"
-              value={draft.min_hold_ms}
-              min={50}
-              max={1000}
-              onChange={(e) => patch("min_hold_ms", parseInt(e.target.value, 10) || 150)}
-            />
-          </Field>
-        )}
-        {draft.hotkey_mode === "hybrid" && (
-          <Field label="混合阈值（ms · 短于此为 tap）">
-            <input
-              type="number"
-              className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-32"
-              value={draft.hybrid_press_threshold_ms}
-              min={150}
-              max={2000}
-              onChange={(e) => patch("hybrid_press_threshold_ms", parseInt(e.target.value, 10) || 500)}
-            />
-          </Field>
-        )}
-        <Field label="自动插入到光标">
-          <input
-            type="checkbox"
-            checked={draft.auto_insert}
-            onChange={(e) => patch("auto_insert", e.target.checked)}
-          />
-        </Field>
-        <Field label="同时复制到剪贴板">
-          <input
-            type="checkbox"
-            checked={draft.also_copy}
-            onChange={(e) => patch("also_copy", e.target.checked)}
-          />
-        </Field>
-      </Section>
-
-      <Section title="提示音 / 反馈">
-        <Field label="启用提示音">
-          <input
-            type="checkbox"
-            checked={draft.sound_feedback_enabled}
-            onChange={(e) => patch("sound_feedback_enabled", e.target.checked)}
-          />
-        </Field>
-        <Field label="音量">
-          <div className="flex items-center gap-2">
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={draft.sound_feedback_volume}
-              onChange={(e) => patch("sound_feedback_volume", parseFloat(e.target.value))}
-              disabled={!draft.sound_feedback_enabled}
-              className="w-40"
-            />
-            <span className="text-xs text-ink-500 w-10">
-              {Math.round(draft.sound_feedback_volume * 100)}%
-            </span>
-            <button
-              type="button"
-              className="text-xs px-2 py-1 rounded border border-ink-300 hover:bg-ink-50 disabled:opacity-40"
-              disabled={!draft.sound_feedback_enabled}
-              onClick={() => playFeedbackTone("start", draft.sound_feedback_volume)}
-            >
-              试听
-            </button>
-          </div>
-        </Field>
-      </Section>
-
-      <Section title="历史清理">
-        <Field label="按保留期清理">
-          <input
-            type="checkbox"
-            checked={draft.history_cleanup_enabled}
-            onChange={(e) => patch("history_cleanup_enabled", e.target.checked)}
-          />
-        </Field>
-        <Field label="保留天数">
-          <input
-            type="number"
-            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-32"
-            value={draft.history_retention_days}
-            min={1}
-            max={3650}
-            disabled={!draft.history_cleanup_enabled}
-            onChange={(e) =>
-              patch("history_retention_days", parseInt(e.target.value, 10) || 30)
-            }
-          />
-        </Field>
-        <div className="text-xs text-ink-400 leading-relaxed">
-          关闭时不动你的历史。开启后每次启动 + 每天会删除超过保留天数的记录。
-          手动「清空全部历史」按钮在「历史」tab 也有。
-        </div>
-      </Section>
-
-      <Section title="词典（生词/术语，每行一个）">
-        <textarea
-          className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-full h-32 font-mono"
-          value={draft.dictionary.join("\n")}
-          onChange={(e) =>
-            patch(
-              "dictionary",
-              e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
-            )
-          }
-        />
-      </Section>
-
-      <Section title="账号（tititalk.com）">
-        <AccountSection />
-      </Section>
-
-      <Section title="润色（Stylist · 转写后再走一发 LLM 调通顺）">
-        <Field label="启用润色">
-          <input
-            type="checkbox"
-            checked={draft.stylist_enabled}
-            onChange={(e) => patch("stylist_enabled", e.target.checked)}
-          />
-        </Field>
-        <Field label="风格">
-          <select
-            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300"
-            value={draft.stylist_persona}
-            onChange={(e) => patch("stylist_persona", e.target.value as AppConfig["stylist_persona"])}
-            disabled={!draft.stylist_enabled}
-          >
-            <option value="friendly">友好口语 · 通顺自然</option>
-            <option value="formal">正式书面 · 邮件/商务腔</option>
-            <option value="mixed_zh_en">中英混说 · 保留英文术语</option>
-          </select>
-        </Field>
-        <Field label="润色模型">
-          <input
-            className="border rounded px-2 py-1.5 text-sm bg-white border-ink-300 w-48"
-            value={draft.stylist_model}
-            onChange={(e) => patch("stylist_model", e.target.value)}
-            placeholder="qwen-turbo"
-            disabled={!draft.stylist_enabled}
-          />
-        </Field>
-        <div className="text-xs text-ink-400 leading-relaxed">
-          润色失败（网络/超时 8s）会自动用原文，不会卡插入。短于 4 字的转写跳过润色省 token。
-        </div>
-      </Section>
-
-      <div className="flex items-center gap-3 pt-2">
-        <button
-          className="px-4 py-2 rounded-md bg-ink-900 text-white text-sm hover:bg-ink-700 disabled:opacity-50"
-          disabled={saving}
-          onClick={async () => {
-            setSaving(true);
-            try {
-              await onSave(draft);
-              setTestResult("已保存");
-            } catch (e) {
-              setTestResult("保存失败：" + String(e));
-            } finally {
-              setSaving(false);
-            }
-          }}
-        >保存</button>
-        <button
-          className="px-4 py-2 rounded-md border border-ink-300 text-sm hover:bg-ink-100"
-          onClick={async () => {
-            setTestResult("测试中…");
-            try {
-              const r = await testAsr();
-              setTestResult("测试 " + r);
-            } catch (e) {
-              setTestResult("测试失败：" + String(e));
-            }
-          }}
-        >测试 API key</button>
-        <span className="text-sm text-ink-500">{testResult}</span>
-      </div>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-ink-200 bg-white p-5 space-y-3">
-      <div className="font-medium text-ink-900">{title}</div>
-      <div className="space-y-3">{children}</div>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="grid grid-cols-[180px_1fr] items-center gap-3">
-      <div className="text-sm text-ink-600">{label}</div>
-      <div>{children}</div>
-    </div>
-  );
-}
 
 function HistoryPane({
   items,
@@ -1225,22 +985,7 @@ function HistoryPane({
   );
 }
 
-function AboutPane({ version }: { version: string }) {
-  return (
-    <div className="max-w-2xl space-y-3 text-sm text-ink-700">
-      <h1 className="text-2xl font-semibold text-ink-900">关于</h1>
-      <p>TiTiTalk Windows v{version || "…"} — 跨平台语音输入法 Windows 端。</p>
-      <p>
-        Mac 端已上线 v2.10.12（35K LOC SwiftUI），Windows 端基于 Tauri 2 + Rust 重写底层
-        音频/热键/插入，UI 与 Mac 端共享设计语言。
-      </p>
-      <p className="text-ink-500">
-        本版本未做代码签名（首次启动会触发 SmartScreen 警告，点击「更多信息 → 仍要运行」即可）。
-        EV 证书拿到后会重新签名。
-      </p>
-    </div>
-  );
-}
+// AboutPane removed — 关于信息合并到 AccountSheet 底部 footer / 侧栏 v 版本号。
 
 function phaseLabel(p: string): string {
   return ({

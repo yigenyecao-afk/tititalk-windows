@@ -27,7 +27,9 @@ use crate::state::{AppState, PipelineEvent, PipelinePhase};
 use crate::stylist;
 
 const TARGET_SR: u32 = 16_000;
-const MAX_DURATION_SECS: f32 = 60.0;
+/// 5 min — paraformer-realtime-v2 streams comfortably to this length, matches
+/// server WS session cap (MAX_SESSION_SEC=300), and lifts the old 60s wall users hit.
+const MAX_DURATION_SECS: f32 = 300.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapturedAudio {
@@ -59,10 +61,20 @@ impl CapturedAudio {
 struct CaptureHandle {
     stop_flag: Arc<Mutex<bool>>,
     rx: Option<oneshot::Receiver<anyhow::Result<CapturedAudio>>>,
+    /// (v0.7.6) tititalk_cloud 流式：start 时持有 → stop 用 stop_tx 通知
+    /// asr_stream 任务进 finish + await final_rx 拿文本。其他引擎为 None。
+    stream: Option<crate::asr_stream::StreamHandle>,
 }
 
 /// Currently active recording. Cleared when stop completes.
 static ACTIVE: once_cell::sync::Lazy<Mutex<Option<CaptureHandle>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(None));
+
+/// (v0.7.6) tititalk_cloud 流式 PCM 出口。orchestrate_start 在跑流式 session
+/// 前装上；capture 线程的 process_chunk_* 把 i16 LE bytes 同时塞进 collected +
+/// 这个 channel。stop 后清。其他引擎为 None → process_chunk 直接跳过 push。
+/// Mutex 是必须的（capture 线程 + orchestrator 都要写），但读路径竞争极轻。
+static STREAMING_PCM_TX: once_cell::sync::Lazy<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 
 pub async fn orchestrate_start(state: Arc<AppState>) {
@@ -85,6 +97,31 @@ pub async fn orchestrate_start(state: Arc<AppState>) {
     let stop_flag_thr = stop_flag.clone();
     let event_tx = state.event_tx.clone();
 
+    // (v0.7.6) tititalk_cloud 引擎：在 capture 线程跑之前先开 streaming WS
+    // session。失败 fallback 给 batch 路径（保留 _stream_handle = None）。
+    // capture 线程通过 STREAMING_PCM_TX 全局 channel 推 PCM。
+    let cfg_engine = state.config.read().engine.clone();
+    let stream_handle = if cfg_engine == "tititalk_cloud" {
+        match crate::asr_stream::start_session(state.clone(), TARGET_SR).await {
+            Ok(h) => {
+                *STREAMING_PCM_TX.lock() = Some(h.pcm_tx.clone());
+                Some(h)
+            }
+            Err(e) => {
+                // 流式起不来 → fallback：batch 路径在 stop 时跑（跟旧版本一样）。
+                // 用 Notice 而不是 Error，避免吓到用户「录音失败」—— 文本仍然
+                // 会在停止时拿到。
+                log::warn!("ASR streaming start failed, fallback to batch: {e}");
+                state.emit(PipelineEvent::Notice {
+                    message: format!("ASR 流式不可用，已降级到批处理：{e}"),
+                });
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     std::thread::Builder::new()
         .name("tititalk-capture".into())
         .spawn(move || {
@@ -96,6 +133,7 @@ pub async fn orchestrate_start(state: Arc<AppState>) {
     *ACTIVE.lock() = Some(CaptureHandle {
         stop_flag,
         rx: Some(rx),
+        stream: stream_handle,
     });
 }
 
@@ -103,7 +141,8 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     state.set_phase(PipelinePhase::Stopping);
     state.emit(PipelineEvent::Sound { sound: "stop".into() });
 
-    let rx = {
+    // 拿出 capture rx + 流式 handle（如果有）；ACTIVE 即时清掉
+    let (rx, stream_handle) = {
         let mut active = ACTIVE.lock();
         let Some(handle) = active.as_mut() else {
             state.set_phase(PipelinePhase::Failed);
@@ -113,8 +152,11 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
             return;
         };
         *handle.stop_flag.lock() = true;
-        handle.rx.take()
+        (handle.rx.take(), handle.stream.take())
     };
+    // 清掉全局 PCM 出口（capture 线程关流后不再喂；后续 process_chunk 不会
+    // 再 send 到一个已 close 的 channel）
+    *STREAMING_PCM_TX.lock() = None;
 
     let Some(rx) = rx else {
         return;
@@ -143,7 +185,40 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     state.set_phase(PipelinePhase::Transcribing);
 
     let cfg = state.config.read().clone();
-    let raw = match asr::transcribe(&cfg, &captured, &state).await {
+
+    // (v0.7.6) 优先走流式 final；只有 stream_handle 是 None 或 streaming 失败
+    // 才回退 batch。
+    let raw_result: anyhow::Result<String> = if let Some(handle) = stream_handle {
+        let _ = handle.stop_tx.send(()); // 通知 ws 任务发 stop 事件
+        // final_rx 等服务端 final；本地 30s 上限够长（服务端 5min cap，但单条
+        // 60s 录音 flush 通常 <2s）。失败 fallback batch。
+        match tokio::time::timeout(std::time::Duration::from_secs(30), handle.final_rx).await {
+            Ok(Ok(Ok(text))) => {
+                // 成功 —— 清空 partial（pill 上的过程文消失，下面 transcript 替代）
+                state.emit(PipelineEvent::Partial { text: String::new() });
+                Ok(text)
+            }
+            Ok(Ok(Err(e))) => {
+                log::warn!("streaming final err, fallback to batch: {e}");
+                state.emit(PipelineEvent::Partial { text: String::new() });
+                asr::transcribe(&cfg, &captured, &state).await
+            }
+            Ok(Err(_canceled)) => {
+                log::warn!("streaming final channel closed, fallback to batch");
+                state.emit(PipelineEvent::Partial { text: String::new() });
+                asr::transcribe(&cfg, &captured, &state).await
+            }
+            Err(_timeout) => {
+                log::warn!("streaming final timeout 30s, fallback to batch");
+                state.emit(PipelineEvent::Partial { text: String::new() });
+                asr::transcribe(&cfg, &captured, &state).await
+            }
+        }
+    } else {
+        asr::transcribe(&cfg, &captured, &state).await
+    };
+
+    let raw = match raw_result {
         Ok(t) => t,
         Err(e) => {
             state.set_phase(PipelinePhase::Failed);
@@ -193,10 +268,7 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
                     cfg.engine, polish_t0.elapsed().as_secs_f32()
                 );
                 // (v0.7.4 polish-fix) 旧版本只 log 不通知 UI，用户体感「润色失效
-                // 但没原因」。改 emit Error 让前端 lastError banner 接住具体原因
-                // （pill 已经在显示 raw 了，这条文字补「为什么没润色」信息差）。
-                // 用户之前反馈「不要重复 toast」是指 input-process 错误重复，
-                // polish 失败发一次 banner 是补信息不算重复。
+                // 但没原因」。改 emit Error 让前端 lastError banner 接住具体原因。
                 state.emit(PipelineEvent::Error {
                     message: format!("⚠️ 润色失败，已落原始转写：{e}"),
                 });
@@ -378,6 +450,19 @@ fn process_chunk_f32(
         buf.push((clamped * 32_767.0) as i16);
     }
     collected.lock().extend_from_slice(&buf);
+    // (v0.7.6) 流式 ASR 旁路 —— 跟 collected 双写。i16 LE bytes 直接推 ws 任务。
+    // STREAMING_PCM_TX 只在 tititalk_cloud 引擎 + start_session 成功时才有；
+    // 其它引擎 None → 这里直接跳过，0 开销。channel send 失败（已 close）也
+    // 安全忽略，capture 线程不该因为 ws 出问题而崩。
+    if !buf.is_empty() {
+        if let Some(tx) = STREAMING_PCM_TX.lock().clone() {
+            let mut bytes = Vec::with_capacity(buf.len() * 2);
+            for s in &buf {
+                bytes.extend_from_slice(&s.to_le_bytes());
+            }
+            let _ = tx.send(bytes);
+        }
+    }
     if !resampled.is_empty() {
         let rms = (sum_sq / resampled.len() as f64).sqrt() as f32;
         let _ = event_tx.send(PipelineEvent::Level { rms });

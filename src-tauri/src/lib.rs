@@ -1,5 +1,6 @@
 mod account;
 mod asr;
+mod asr_stream;
 mod audio;
 mod config;
 mod history;

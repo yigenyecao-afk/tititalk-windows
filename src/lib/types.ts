@@ -42,6 +42,8 @@ export type PipelinePhase =
 export type PipelineEvent =
   | { kind: "phase"; phase: PipelinePhase }
   | { kind: "level"; rms: number }
+  /// (v0.7.6) 流式 ASR 进行中文本 — 用最新值覆盖（不是 diff），transcript 到达后清空。
+  | { kind: "partial"; text: string }
   | { kind: "transcript"; text: string }
   | { kind: "error"; message: string }
   // Soft toast — graceful degradation (e.g. stylist failed but raw text was

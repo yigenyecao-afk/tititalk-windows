@@ -27,6 +27,9 @@ pub enum PipelinePhase {
 pub enum PipelineEvent {
     Phase { phase: PipelinePhase },
     Level { rms: f32 },
+    /// (v0.7.6) 流式 ASR 进行中文本 — 同 Mac partialText：每次推完整当前可见
+    /// 句子（不是 diff）。前端 pill 用最新值覆盖，Transcript 到达后清空。
+    Partial { text: String },
     Transcript { text: String },
     Error { message: String },
     /// Soft notice — UI shows as a transient toast, not a red error banner.
