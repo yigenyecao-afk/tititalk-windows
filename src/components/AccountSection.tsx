@@ -31,6 +31,10 @@ export default function AccountSection() {
   const [snap, setSnap] = useState<AccountSnapshot | null>(null);
   const [devices, setDevices] = useState<DeviceInfo[] | null>(null);
   const [busy, setBusy] = useState(false);
+  /// (C6) unbind device 的失败提示。null = 没失败；string = 给用户看的 toast。
+  /// 单独维护而不是塞进 lastError —— lastError 是登录类错误，用户对解绑
+  /// 失败的预期是「这条具体设备没解掉」，希望提示在设备列表附近。
+  const [unbindError, setUnbindError] = useState("");
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
@@ -109,18 +113,58 @@ export default function AccountSection() {
               setBusy(false);
             }
           }}
-          onUnbind={async (id) => {
-            await unbindDevice(id);
-            const fresh = await getDevices();
-            setDevices(fresh);
+          onSwitchAccount={async () => {
+            // 「换账号」= logout + 立刻拉新 desktop session 一气呵成。
+            // 比让用户先点退出再点登录少一步，且明确告诉用户即将切走。
+            setBusy(true);
+            try {
+              await logout();
+              setDevices(null);
+              await startLogin();
+            } catch (e) {
+              console.warn("switch account:", e);
+            } finally {
+              setBusy(false);
+            }
           }}
+          onUnbind={async (id) => {
+            // (C6) try/catch 包起 unbind + reload —— 401/403/网络断时给
+            // 用户看得到的反馈，不是默默失败。setUnbindError 会让 UI 在
+            // 设备列表上方渲染一行红字。
+            setUnbindError("");
+            try {
+              await unbindDevice(id);
+              const fresh = await getDevices();
+              setDevices(fresh);
+            } catch (e) {
+              setUnbindError(`解绑失败：${String(e)}`);
+              // 还是 try 重新拉一次列表 —— 也许 unbind 实际成功了只是 reload 网断
+              try {
+                const fresh = await getDevices();
+                setDevices(fresh);
+              } catch {
+                /* 静默；用户下次刷新自然会看到 */
+              }
+            }
+          }}
+          unbindError={unbindError}
+          onDismissUnbindError={() => setUnbindError("")}
           busy={busy}
         />
       )}
 
-      <div className="text-[11px] text-ink-400 leading-relaxed pt-1">
-        独立开发者运营 · <a href="https://tititalk.com" target="_blank" rel="noreferrer" className="underline">tititalk.com</a>
-        ·  没有找回流程，请妥善保管账号密码。
+      <div className="text-[11px] text-ink-400 leading-relaxed pt-1 space-y-0.5">
+        <div>
+          独立开发者运营 · <a href="https://tititalk.com" target="_blank" rel="noreferrer" className="underline">tititalk.com</a>
+          ·  没有找回流程，请妥善保管账号密码。
+        </div>
+        {/* PIPL：把隐私政策入口紧贴账号信息后面 —— 用户找数据处理说明
+            的本能位置。无登录态 / 已登录态都看得见。 */}
+        <div>
+          <a href="https://tititalk.com/privacy" target="_blank" rel="noreferrer" className="underline">隐私政策</a>
+          {" · "}
+          <a href="https://tititalk.com/terms" target="_blank" rel="noreferrer" className="underline">服务条款</a>
+        </div>
       </div>
     </div>
   );
@@ -197,7 +241,10 @@ function AuthenticatedView({
   quota,
   devices,
   onLogout,
+  onSwitchAccount,
   onUnbind,
+  unbindError,
+  onDismissUnbindError,
   busy,
 }: {
   user: User;
@@ -205,7 +252,10 @@ function AuthenticatedView({
   quota: QuotaInfo | null;
   devices: DeviceInfo[] | null;
   onLogout: () => void;
+  onSwitchAccount: () => void;
   onUnbind: (id: number) => Promise<void>;
+  unbindError: string;
+  onDismissUnbindError: () => void;
   busy: boolean;
 }) {
   return (
@@ -231,9 +281,46 @@ function AuthenticatedView({
       </div>
 
       {license && <LicenseRow lic={license} />}
-      {quota && <QuotaBar q={quota} />}
+      {quota ? (
+        <QuotaBar q={quota} />
+      ) : (
+        // (B5) quota=null 表示后台 3 次 retry 都失败。原来不显示 → 用户
+        // 以为无限额。改成显式 warning + 重试，让用户至少知道「这数字
+        // 可能不准」，避免误以为额度无限然后突然 429。
+        <div className="flex items-center gap-2 px-3 py-2 rounded border border-amber-200 bg-amber-50 text-xs">
+          <span className="text-amber-700">⚠️</span>
+          <div className="flex-1">
+            <div className="font-medium text-amber-800">配额信息加载失败</div>
+            <div className="text-amber-700">
+              可能是网络抖动。功能仍可用，但显示的剩余 token 可能不准。
+            </div>
+          </div>
+          <button
+            type="button"
+            className="px-2 py-1 rounded bg-amber-600 text-white text-xs hover:bg-amber-700"
+            onClick={() => reloadMe()}
+          >
+            重试
+          </button>
+        </div>
+      )}
 
       <UpgradeCard />
+
+      {unbindError && (
+        <div className="flex items-start gap-2 text-xs px-3 py-2 rounded border border-red-200 bg-red-50 text-red-700">
+          <span>⚠</span>
+          <div className="flex-1">{unbindError}</div>
+          <button
+            type="button"
+            className="text-red-500 hover:text-red-700"
+            onClick={onDismissUnbindError}
+            aria-label="关闭"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {devices && devices.length > 0 && (
         <div>
@@ -264,13 +351,21 @@ function AuthenticatedView({
         </div>
       )}
 
-      <div className="flex items-center gap-3 pt-1">
+      <div className="flex items-center gap-3 pt-1 flex-wrap">
         <button
           className="px-3 py-1.5 rounded border border-ink-300 text-sm hover:bg-ink-100 disabled:opacity-50"
           onClick={onLogout}
           disabled={busy}
         >
           退出登录
+        </button>
+        <button
+          className="px-3 py-1.5 rounded border border-ink-300 text-sm hover:bg-ink-100 disabled:opacity-50"
+          onClick={onSwitchAccount}
+          disabled={busy}
+          title="退出当前账号 + 立刻打开浏览器登录另一个账号"
+        >
+          换账号
         </button>
         <a
           href="https://tititalk.com/dashboard"
@@ -318,6 +413,10 @@ function UpgradeCard() {
     startedAt: number;
   } | null>(null);
   const [payErr, setPayErr] = useState<string>("");
+  /// (A1/A3) 轮询连续失败 3 次后显示的「网络不稳」warning；成功一次清空。
+  /// 区别于 payErr —— 那是终态错误（超时 / 下单失败 / 已解锁），这只是
+  /// 中间态提示，让用户至少知道「我没死，在重试」。
+  const [pollWarn, setPollWarn] = useState<string>("");
   const pollRef = useRef<number | null>(null);
 
   // Pull catalog on mount + whenever account state changes upstream.
@@ -361,9 +460,14 @@ function UpgradeCard() {
 
   function startPolling(orderId: number) {
     if (pollRef.current) window.clearInterval(pollRef.current);
+    // (A1/A3) 轮询失败的累计计数 —— 单次失败不打扰用户，连续 ≥3 次
+    // （6s 还在抖）才提示「网络不稳，重试中」。这样既不噪也不沉默。
+    let consecutiveFails = 0;
     pollRef.current = window.setInterval(async () => {
       try {
         const o = await billingGetOrder(orderId);
+        consecutiveFails = 0;
+        setPollWarn("");
         setPending((cur) => cur ? { ...cur, status: o.status } : cur);
         if (o.status === "paid") {
           stopPolling();
@@ -380,8 +484,12 @@ function UpgradeCard() {
           setPayErr("支付超时（5 分钟未确认）。如已付款，请稍后重开应用，或邮件 hi@tititalk.com。");
         }
       } catch (e) {
-        // Transient — keep polling. Surface only after sustained failure.
+        // 单次抖动不打扰，但持续失败要给反馈。
+        consecutiveFails += 1;
         console.info("billing poll:", e);
+        if (consecutiveFails === 3) {
+          setPollWarn("网络不稳，正在持续重试…如果你已付完款，5 分钟内会自动检测到。");
+        }
       }
     }, 2000) as unknown as number;
   }
@@ -414,6 +522,11 @@ function UpgradeCard() {
         {payErr && (
           <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">
             {payErr}
+          </div>
+        )}
+        {pollWarn && !payErr && (
+          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+            {pollWarn}
           </div>
         )}
         <div className="grid grid-cols-1 gap-2">
@@ -588,7 +701,24 @@ function LicenseRow({ lic }: { lic: LicenseInfo }) {
   );
 }
 
+/// 把 ISO8601 reset_at 翻成本地「今天 00:00 / 明天 00:30」。
+/// 用户读取 quota「明天 0 点」抽象，看到具体时间更踏实。
+function fmtResetAt(iso: string | null | undefined): string {
+  if (!iso) return "次日 0 点重置";
+  const t = new Date(iso);
+  if (isNaN(t.getTime())) return "次日 0 点重置";
+  const now = new Date();
+  const sameDay =
+    t.getFullYear() === now.getFullYear() &&
+    t.getMonth() === now.getMonth() &&
+    t.getDate() === now.getDate();
+  const hh = t.getHours().toString().padStart(2, "0");
+  const mm = t.getMinutes().toString().padStart(2, "0");
+  return `${sameDay ? "今天" : "明天"} ${hh}:${mm} 重置`;
+}
+
 function QuotaBar({ q }: { q: QuotaInfo }) {
+  const resetCopy = fmtResetAt(q.reset_at);
   // 优先 token 口径（v0.6+）。0.1s 说话 ≈ 1 token，10 token ≈ 1 秒录音。
   const hasTokens = q.limit_tokens != null && q.used_tokens != null && q.remaining_tokens != null;
   if (hasTokens) {
@@ -616,13 +746,15 @@ function QuotaBar({ q }: { q: QuotaInfo }) {
         </div>
         {empty ? (
           <div className="text-[11px] text-ink-500 mt-1">
-            今日 token 用完。可升级专业版、解锁本地 Whisper 或切到 BYOK 自带 key。明天 0 点重置。
+            今日 token 用完。可升级专业版、解锁本地 Whisper 或切到 BYOK 自带 key。{resetCopy}。
           </div>
         ) : pct > 0.8 ? (
           <div className="text-[11px] text-ink-500 mt-1">
-            快用完了：约 {fmtTokenSeconds(remaining)} 录音剩余。
+            快用完了：约 {fmtTokenSeconds(remaining)} 录音剩余。{resetCopy}。
           </div>
-        ) : null}
+        ) : (
+          <div className="text-[11px] text-ink-400 mt-1">{resetCopy}。</div>
+        )}
       </div>
     );
   }
@@ -649,10 +781,12 @@ function QuotaBar({ q }: { q: QuotaInfo }) {
           style={{ width: `${pct * 100}%` }}
         />
       </div>
-      {empty && (
+      {empty ? (
         <div className="text-[11px] text-ink-500 mt-1">
-          今日额度用完，云调用已自动降级到本地。明天 0 点重置。
+          今日额度用完，云调用已自动降级到本地。{resetCopy}。
         </div>
+      ) : (
+        <div className="text-[11px] text-ink-400 mt-1">{resetCopy}。</div>
       )}
     </div>
   );

@@ -111,6 +111,12 @@ pub struct SyncState {
     /// fast second change while one is pending coalesces into the in-flight
     /// task instead of spawning a competitor.
     pub put_in_flight: bool,
+    /// 上次从云端 GET 到的 ui_preferences 完整子 dict —— 缓存它的目的是
+    /// 在 PUT 时把本端不认识的子 key（如 mac 端独有的 floating_theme /
+    /// launcher_enabled 等）原样保留，避免「Win 改一个 hotkey_mode 就把
+    /// Mac 的 floating_pill_enabled 擦掉」这种跨端互踩。
+    /// 第一次拿不到（cloud 空 / GET 失败）时为 None，put 走纯本地。
+    pub last_cloud_ui_preferences: Option<Map<String, Value>>,
 }
 
 #[derive(Clone)]
@@ -145,10 +151,17 @@ impl CloudConfigSync {
             Ok(c) => c,
             Err(e) => {
                 log::info!("CloudConfigSync.bootstrap_reconcile GET failed: {e}");
+                self.report_sync_error("配置同步：拉取失败，下次改设置时会自动重试。", &e);
                 return;
             }
         };
-        let local = snapshot_from_config(&self.app.config.read());
+        // 缓存云端 ui_preferences —— 后续 PUT 用它兜底未知子 key（详见
+        // last_cloud_ui_preferences 注释）。
+        if let Some(ui) = cloud.config.get("ui_preferences").and_then(|v| v.as_object()) {
+            self.inner.lock().await.last_cloud_ui_preferences = Some(ui.clone());
+        }
+        let cloud_ui = self.inner.lock().await.last_cloud_ui_preferences.clone();
+        let local = snapshot_from_config_with_overlay(&self.app.config.read(), cloud_ui.as_ref());
 
         let last_known = self.inner.lock().await.last_known_version;
 
@@ -217,7 +230,8 @@ impl CloudConfigSync {
             }
             g.put_in_flight = true;
         }
-        let local = snapshot_from_config(&self.app.config.read());
+        let cloud_ui = self.inner.lock().await.last_cloud_ui_preferences.clone();
+        let local = snapshot_from_config_with_overlay(&self.app.config.read(), cloud_ui.as_ref());
         let base = self.inner.lock().await.last_known_version;
         self.put(local, base).await;
         let mut g = self.inner.lock().await;
@@ -226,7 +240,7 @@ impl CloudConfigSync {
 
     /// PUT with `If-Match`. On 412 → trigger reconcile (which surfaces a
     /// fresh conflict). On 413 (oversize) → log + drop. Other errors →
-    /// log; next change will retry.
+    /// log + UI notice; next change will retry.
     async fn put(&self, local: Map<String, Value>, base_version: i64) {
         let body = ConfigSyncIn {
             config: local,
@@ -250,11 +264,36 @@ impl CloudConfigSync {
                     Box::pin(self.bootstrap_reconcile()).await;
                 } else if e.status() == Some(413) {
                     log::warn!("CloudConfigSync.put: config exceeds 100KB — dropped");
+                    self.report_sync_error(
+                        "云端同步：配置超过 100KB（可能是词典过大），暂未同步。",
+                        &e,
+                    );
                 } else {
                     log::info!("CloudConfigSync.put failed: {e}");
+                    self.report_sync_error(
+                        "云端同步暂时失败，下次改设置时会自动重试。",
+                        &e,
+                    );
                 }
             }
         }
+    }
+
+    /// 发 PipelineEvent::Notice 让前端 toast 提示用户「同步出问题了」。
+    /// 不复用 force-error banner —— 同步失败下一次改设置就会自动重试，
+    /// 不必让用户手动操作。降级到 transient toast。
+    fn report_sync_error(&self, msg: &str, e: &ApiError) {
+        // 网络断（offline/timeout）噪音太多 —— 静默 log，避免每次设置改都
+        // 弹 toast 烦死用户。只对真实业务/服务端错误（4xx 5xx）出 toast。
+        if matches!(e, ApiError::Transport(_)) {
+            return;
+        }
+        let _ = self
+            .app
+            .event_tx
+            .send(crate::state::PipelineEvent::Notice {
+                message: msg.to_string(),
+            });
     }
 
     async fn force_put(&self, local: Map<String, Value>) {
@@ -286,7 +325,8 @@ impl CloudConfigSync {
         };
         match action {
             ConflictResolution::KeepLocal => {
-                let local = snapshot_from_config(&self.app.config.read());
+                let cloud_ui = snap.cloud.get("ui_preferences").and_then(|v| v.as_object()).cloned();
+                let local = snapshot_from_config_with_overlay(&self.app.config.read(), cloud_ui.as_ref());
                 self.force_put(local).await;
             }
             ConflictResolution::UseCloud => {
@@ -335,21 +375,49 @@ impl CloudConfigSync {
 // --- snapshot / apply -------------------------------------------------
 
 pub fn snapshot_from_config(cfg: &AppConfig) -> Map<String, Value> {
+    snapshot_from_config_with_overlay(cfg, None)
+}
+
+/// PUT 时调这个 —— `cloud_ui` 是上次 GET 拿到的云端 ui_preferences 子 dict。
+/// 我们把本端已知字段 OVERLAY 到 cloud_ui 上：本端写过的 key 用本端值（覆盖
+/// 云端旧值），其他 key（mac 端独有的 floating_pill_enabled / launcher_enabled
+/// 等）保留不动。这样 Win PUT 不会把 Mac 的 ui 设置擦掉，反之亦然。
+/// `cloud_ui = None` 时（首次同步 / 云端空）走纯本地，行为跟旧代码一致。
+pub fn snapshot_from_config_with_overlay(
+    cfg: &AppConfig,
+    cloud_ui: Option<&Map<String, Value>>,
+) -> Map<String, Value> {
     let mut m = Map::new();
     m.insert("version_schema".into(), json!(SCHEMA_VERSION));
     m.insert("dictionaries".into(), json!(cfg.dictionary));
     m.insert("default_engine".into(), json!(cfg.engine));
     m.insert("default_language".into(), json!(cfg.language));
     m.insert("default_stylist".into(), json!(cfg.stylist_persona));
-    let ui = json!({
-        "auto_insert":      cfg.auto_insert,
-        "also_copy":        cfg.also_copy,
-        "hotkey_vk":        cfg.hotkey_vk,
-        "min_hold_ms":      cfg.min_hold_ms,
-        "stylist_enabled":  cfg.stylist_enabled,
-        "stylist_model":    cfg.stylist_model,
-    });
-    m.insert("ui_preferences".into(), ui);
+    // 本端已知的所有 ui_preferences 子 key 列表 —— 必须显式列全，否则
+    // overlay 时会把这一端「最近本地清空」的字段误判成「未知字段」保留
+    // 云端旧值。新增一个 ui 字段时这里也要加一行。
+    let local_ui_keys: &[(&str, Value)] = &[
+        ("auto_insert",               json!(cfg.auto_insert)),
+        ("also_copy",                 json!(cfg.also_copy)),
+        ("hotkey_vk",                 json!(cfg.hotkey_vk)),
+        ("min_hold_ms",               json!(cfg.min_hold_ms)),
+        ("stylist_enabled",           json!(cfg.stylist_enabled)),
+        ("stylist_model",             json!(cfg.stylist_model)),
+        ("hotkey_mode",               json!(cfg.hotkey_mode)),
+        ("hybrid_press_threshold_ms", json!(cfg.hybrid_press_threshold_ms)),
+        ("sound_feedback_enabled",    json!(cfg.sound_feedback_enabled)),
+        ("sound_feedback_volume",     json!(cfg.sound_feedback_volume)),
+        ("history_retention_days",    json!(cfg.history_retention_days)),
+        ("history_cleanup_enabled",   json!(cfg.history_cleanup_enabled)),
+    ];
+    let mut ui_map: Map<String, Value> = match cloud_ui {
+        Some(cu) => cu.clone(), // 保留云端所有字段（含 mac 独有的）
+        None => Map::new(),
+    };
+    for (k, v) in local_ui_keys {
+        ui_map.insert((*k).to_string(), v.clone());
+    }
+    m.insert("ui_preferences".into(), Value::Object(ui_map));
     // Drop any keys not on the server whitelist (defensive — none right
     // now, but cheap insurance against future drift).
     let allow = allowed_keys();
@@ -391,6 +459,29 @@ pub fn apply_cloud_to_config(cloud: &Map<String, Value>, cfg: &mut AppConfig) {
         }
         if let Some(s) = ui.get("stylist_model").and_then(|v| v.as_str()) {
             cfg.stylist_model = s.to_string();
+        }
+        // ↓ v0.6 新增字段，老条目可能没有 → 维持本地默认。
+        if let Some(s) = ui.get("hotkey_mode").and_then(|v| v.as_str()) {
+            // 防御：只接受三个已知值，未知值 fallback push_to_talk
+            cfg.hotkey_mode = match s {
+                "toggle" | "hybrid" | "push_to_talk" => s.to_string(),
+                _ => "push_to_talk".to_string(),
+            };
+        }
+        if let Some(n) = ui.get("hybrid_press_threshold_ms").and_then(|v| v.as_u64()) {
+            cfg.hybrid_press_threshold_ms = n as u32;
+        }
+        if let Some(b) = ui.get("sound_feedback_enabled").and_then(|v| v.as_bool()) {
+            cfg.sound_feedback_enabled = b;
+        }
+        if let Some(f) = ui.get("sound_feedback_volume").and_then(|v| v.as_f64()) {
+            cfg.sound_feedback_volume = f.clamp(0.0, 1.0) as f32;
+        }
+        if let Some(n) = ui.get("history_retention_days").and_then(|v| v.as_u64()) {
+            cfg.history_retention_days = n as u32;
+        }
+        if let Some(b) = ui.get("history_cleanup_enabled").and_then(|v| v.as_bool()) {
+            cfg.history_cleanup_enabled = b;
         }
     }
 }

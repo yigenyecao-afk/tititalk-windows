@@ -29,6 +29,32 @@ pub struct AppConfig {
     /// Min hold duration to count as a real press (ms), filters accidental taps.
     #[serde(default = "default_min_hold_ms")]
     pub min_hold_ms: u32,
+    /// Hotkey 行为模式（对齐 mac AppDefaults.hotkeyMode）：
+    /// - "push_to_talk": 按住录，松手停（默认）
+    /// - "toggle": 按一下开，再按一下停（不需要一直按住）
+    /// - "hybrid": 短按 toggle，长按（> hybrid_press_threshold_ms）push-to-talk
+    #[serde(default = "default_hotkey_mode")]
+    pub hotkey_mode: String,
+    /// Hybrid 模式下，按下时间超过此阈值即转为 PTT；短于此阈值算 tap → toggle。
+    /// mac 默认 500ms（hybridPressThresholdSeconds=0.5）。
+    #[serde(default = "default_hybrid_threshold_ms")]
+    pub hybrid_press_threshold_ms: u32,
+    /// 录音开始 / 结束时是否播提示音（对齐 mac isSoundFeedbackEnabled，默认开）。
+    #[serde(default = "yes")]
+    pub sound_feedback_enabled: bool,
+    /// 提示音音量 0.0~1.0（对齐 mac soundFeedbackVolume=0.4）。前端 HTML5 Audio
+    /// 直接读这个值，不走系统 mixer。
+    #[serde(default = "default_sound_volume")]
+    pub sound_feedback_volume: f32,
+    /// 历史保留天数；超过的转写记录在下次启动 + 每日 GC 时被删除。
+    /// 0 = 永久保留。对齐 mac historyRetentionDays=30，但默认我们关闭清理
+    /// （`history_cleanup_enabled=false`）—— 用户不主动开就不动他的数据。
+    #[serde(default = "default_history_retention_days")]
+    pub history_retention_days: u32,
+    /// 是否启用历史清理（按 history_retention_days 截断）。默认关；用户在
+    /// Settings 显式开。对齐 mac isHistoryCleanupEnabled=false。
+    #[serde(default = "no")]
+    pub history_cleanup_enabled: bool,
     /// If true, also copy the transcript to clipboard regardless of insert mode.
     #[serde(default = "no")]
     pub also_copy: bool,
@@ -36,8 +62,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub dictionary: Vec<String>,
     /// Stylist post-processing: feed transcript through chat-completion with persona prompt
-    /// before insertion. Default off (raw ASR), user opts in.
-    #[serde(default = "no")]
+    /// before insertion. Default ON to match mac (`enablePolish=true`); 用户嫌慢/嫌
+    /// 改太多可在 Settings 关掉。stylist 失败已经 fallback 原文 + Notice 而非整条
+    /// 链路炸，开默认是安全的。
+    #[serde(default = "yes")]
     pub stylist_enabled: bool,
     /// Persona key: "friendly" (default), "formal", "mixed_zh_en". Unknown → friendly.
     #[serde(default = "default_persona")]
@@ -49,11 +77,23 @@ pub struct AppConfig {
 
 fn default_engine() -> String { "tititalk_cloud".into() }
 fn default_model() -> String { "qwen3-asr-flash".into() }
-fn default_lang() -> String { "zh".into() }
-fn default_hotkey() -> u32 { 0x70 } // VK_F1
+// "auto" 让百炼按音频自适应；强制 "zh" 会让英文/中英混的用户第一句就糊。
+// 跟 mac AppDefaults.asrForcedLanguage="auto" 对齐。
+fn default_lang() -> String { "auto".into() }
+// CapsLock (VK 0x14) — 大键、容易按住、几乎没有 app 拦截。F1 在 Windows 上是
+// 系统级帮助键，被浏览器/Office/IDE 多处占用，作为默认会让 60% 用户第一次试
+// 就以为坏了。CapsLock 行为我们在 LL hook 里反 toggle 过（按下就 swallow 不
+// 让 IME 切大写），但这里仅作默认值；用户可在「设置」改回 F1。
+fn default_hotkey() -> u32 { 0x14 }
 fn default_min_hold_ms() -> u32 { 150 }
 fn default_persona() -> String { "friendly".into() }
-fn default_stylist_model() -> String { "qwen-turbo".into() }
+// qwen-turbo 4 月已 deprecated（百炼公告点 qwen-flash 为 drop-in 替代），
+// 跟 mac AppDefaults.polishModel="qwen-flash" 对齐。
+fn default_stylist_model() -> String { "qwen-flash".into() }
+fn default_hotkey_mode() -> String { "push_to_talk".into() }
+fn default_hybrid_threshold_ms() -> u32 { 500 }
+fn default_sound_volume() -> f32 { 0.4 }
+fn default_history_retention_days() -> u32 { 30 }
 fn yes() -> bool { true }
 fn no() -> bool { false }
 
@@ -69,9 +109,15 @@ impl Default for AppConfig {
             min_hold_ms: default_min_hold_ms(),
             also_copy: false,
             dictionary: vec![],
-            stylist_enabled: false,
+            stylist_enabled: true,
             stylist_persona: default_persona(),
             stylist_model: default_stylist_model(),
+            hotkey_mode: default_hotkey_mode(),
+            hybrid_press_threshold_ms: default_hybrid_threshold_ms(),
+            sound_feedback_enabled: true,
+            sound_feedback_volume: default_sound_volume(),
+            history_retention_days: default_history_retention_days(),
+            history_cleanup_enabled: false,
         }
     }
 }

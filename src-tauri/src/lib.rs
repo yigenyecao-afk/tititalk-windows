@@ -2,6 +2,7 @@ mod account;
 mod asr;
 mod audio;
 mod config;
+mod history;
 mod hotkey;
 mod insertion;
 mod pill;
@@ -9,6 +10,7 @@ mod state;
 mod stylist;
 mod tray;
 
+use std::io::Write;
 use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
@@ -16,13 +18,93 @@ use tokio::sync::mpsc;
 
 use crate::state::{AppState, PipelineEvent, PipelinePhase};
 
+/// 日志文件落点：`%LOCALAPPDATA%\TiTiTalk\tititalk.log`。
+/// 启动时如果 >2MB 就 rename 成 `tititalk.log.1`（覆盖更老的），简单 ring。
+/// 不用第三方 rolling crate，目的是让 user 能在出 bug 时一个固定路径捞日志，
+/// 而不是 stdout 跟着进程死。
+fn log_file_path() -> std::path::PathBuf {
+    let base = dirs::data_local_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join("TiTiTalk");
+    let _ = std::fs::create_dir_all(&base);
+    base.join("tititalk.log")
+}
+
+fn rotate_log_if_large() {
+    let p = log_file_path();
+    let Ok(meta) = std::fs::metadata(&p) else { return };
+    if meta.len() > 2 * 1024 * 1024 {
+        let prev = p.with_extension("log.1");
+        let _ = std::fs::remove_file(&prev);
+        let _ = std::fs::rename(&p, &prev);
+    }
+}
+
 pub fn run() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    rotate_log_if_large();
+
+    // env_logger 默认只写 stdout —— Windows GUI app stdout 通常重定向到
+    // /dev/null，user 报 bug 时根本拿不到日志。改成「stdout + 同步追加到
+    // tititalk.log」双写。OpenOptions::append 在多线程下被 OS 串行化，
+    // env_logger 自己也对 writer 上 Mutex，这里不用额外锁。
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file_path())
+        .ok();
+    let mut builder = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info"),
+    );
+    if let Some(file) = log_file {
+        let file = std::sync::Mutex::new(file);
+        builder.format(move |buf, record| {
+            let line = format!(
+                "[{} {} {}] {}\n",
+                chrono::Utc::now().to_rfc3339(),
+                record.level(),
+                record.target(),
+                record.args()
+            );
+            // stdout 不让 panic 掐主路径
+            let _ = buf.write_all(line.as_bytes());
+            if let Ok(mut g) = file.lock() {
+                let _ = g.write_all(line.as_bytes());
+            }
+            Ok(())
+        });
+    }
+    builder.init();
+
+    // 之前 bug：Rust panic（unwrap on None / index OOB / 第三方库 panic）
+    // 没有 hook 兜，进程直接死，user 看到「app 闪退」，我们看不到栈。
+    // 这个 hook 把 panic 写进文件日志，至少 user 报 bug 时能从
+    // %LOCALAPPDATA%\TiTiTalk\tititalk.log 拉到现场。
+    std::panic::set_hook(Box::new(|info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        log::error!("PANIC: {info}\nbacktrace:\n{bt}");
+    }));
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<PipelineEvent>();
     let app_state = Arc::new(AppState::new(event_tx.clone()));
 
     tauri::Builder::default()
+        // Single-instance MUST be the very first plugin. With the
+        // `deep-link` feature it auto-forwards `tititalk://...` URLs from
+        // a freshly-spawned second instance into the already-running
+        // instance's `deep_link().on_open_url` listener. Without this,
+        // Windows opens a NEW exe per callback, that new exe has no
+        // `Authenticating` state, and `handle_auth_callback` rejects with
+        // "not awaiting login" — exactly the symptom users hit.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // The plugin's `deep-link` feature already routes URLs; we
+            // still surface the running window so the user sees feedback.
+            use tauri::Manager;
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
@@ -49,6 +131,10 @@ pub fn run() {
             cmd_billing_get_order,
             cmd_billing_open_url,
             cmd_account_reload_me,
+            cmd_history_recent,
+            cmd_history_clear,
+            cmd_open_mic_settings,
+            cmd_check_microphone,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -59,6 +145,16 @@ pub fn run() {
             // Pill positioning helper (initial hide)
             if let Some(pill) = app.get_webview_window("pill") {
                 let _ = pill.hide();
+            }
+
+            // Show main window on first launch + every cold start. The window
+            // is `visible:false` in tauri.conf.json so it doesn't flash before
+            // the React tree mounts; we explicitly show + focus here once the
+            // app has booted. Without this the user sees nothing after install
+            // and has to find the tray icon.
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.show();
+                let _ = main.set_focus();
             }
 
             // Hotkey listener (low-level keyboard hook on Windows)
@@ -73,7 +169,18 @@ pub fn run() {
             });
 
             // Deep-link callback — forwarded to Account.
+            //
+            // `register("tititalk")` is a runtime fallback for two cases
+            // production NSIS install does NOT cover:
+            //   1. dev mode (`pnpm tauri dev`) — no installer ever ran, so
+            //      Windows registry has no handler for tititalk://;
+            //   2. portable / old-install upgrade where the registry key
+            //      didn't get rewritten.
+            // It's a no-op when the registry already points to this exe.
             use tauri_plugin_deep_link::DeepLinkExt;
+            if let Err(e) = app.deep_link().register("tititalk") {
+                log::warn!("deep-link register fallback failed: {e}");
+            }
             let acc_for_deeplink = account.clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
@@ -85,8 +192,23 @@ pub fn run() {
                     });
                 }
             });
+            // Cold-start belt-and-braces: if Windows launched us with a
+            // tititalk:// URL on argv (single-instance hadn't shipped in
+            // older builds, so an upgrading user might still have a stale
+            // launcher path), pick it up here too. on_open_url won't fire
+            // for this case since the URL arrived before the listener.
+            for arg in std::env::args().skip(1) {
+                if arg.starts_with("tititalk://") {
+                    log::info!("deep-link cold-start arg: {arg}");
+                    let acc = account.clone();
+                    tauri::async_runtime::spawn(async move {
+                        acc.handle_auth_callback(&arg).await;
+                    });
+                }
+            }
 
-            // Pipeline event pump → forward to JS + drive pill
+            // Pipeline event pump → forward to JS + drive pill +
+            // persist transcript to history JSONL.
             let pump_state = app_state.clone();
             let pump_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -94,6 +216,47 @@ pub fn run() {
                     log::debug!("pipeline event: {:?}", ev);
                     let _ = pump_handle.emit("pipeline", &ev);
                     pill::on_pipeline_event(&pump_handle, &pump_state, &ev).await;
+                    // tray tooltip 联动 phase —— 录音中/转写中/空闲在 tray hover
+                    // 看得见，比静态 tooltip 强很多（pill 默认关时尤其重要）。
+                    if let PipelineEvent::Phase { phase } = &ev {
+                        tray::update_tooltip_for_phase(&pump_handle, *phase);
+                    }
+                    if let PipelineEvent::Transcript { text } = &ev {
+                        let cfg = pump_state.config.read();
+                        let item = history::HistoryItem {
+                            at: chrono::Utc::now(),
+                            text: text.clone(),
+                            engine: cfg.engine.clone(),
+                            model: Some(cfg.model.clone()),
+                        };
+                        drop(cfg);
+                        // append 是同步 fs，几十微秒；不值得起 spawn_blocking。
+                        history::append(&item);
+                    }
+                }
+            });
+
+            // 启动时跑一次 cleanup（如果开了），并起 24h 周期任务。
+            // 一次性 cleanup 的代价是单次 JSONL 重写，user-facing 无感。
+            //
+            // 注意：parking_lot::RwLockReadGuard 不是 Send，决不能跨 .await
+            // 持锁；下面把 (enabled, days) 拷贝出来再 drop guard，再 await。
+            let cleanup_state = app_state.clone();
+            tauri::async_runtime::spawn(async move {
+                use std::time::Duration;
+                loop {
+                    let (enabled, days) = {
+                        let cfg = cleanup_state.config.read();
+                        (cfg.history_cleanup_enabled, cfg.history_retention_days)
+                    };
+                    if enabled {
+                        // spawn_blocking 隔离 fs IO 不挡 tokio 运行时
+                        let _ = tokio::task::spawn_blocking(move || {
+                            history::cleanup(days);
+                        })
+                        .await;
+                    }
+                    tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
                 }
             });
 
@@ -160,11 +323,7 @@ fn cmd_force_record_stop(state: tauri::State<'_, Arc<AppState>>) -> Result<(), S
 
 #[tauri::command]
 fn cmd_open_main_window(handle: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = handle.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-    }
+    tray::ensure_main_visible(&handle);
     Ok(())
 }
 
@@ -295,4 +454,44 @@ async fn cmd_account_reload_me(
 ) -> Result<(), String> {
     let acc = account_handle(&state)?;
     acc.reload_me().await
+}
+
+// ---------- History commands ----------
+
+#[tauri::command]
+fn cmd_history_recent(limit: Option<usize>) -> Vec<history::HistoryItem> {
+    history::load_recent(limit.unwrap_or(50))
+}
+
+#[tauri::command]
+fn cmd_history_clear() -> Result<(), String> {
+    history::clear_all().map_err(|e| e.to_string())
+}
+
+/// 打开 Windows 11 设置 → 隐私和安全 → 麦克风。`ms-settings:` URI scheme
+/// 是 Win10/11 通用的「直达深页面」，不需要 PowerShell 也不需要权限。
+/// 用于权限被拒后的「一键去开」按钮 —— 没这个用户得自己翻 4 层菜单。
+#[tauri::command]
+fn cmd_open_mic_settings() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        Command::new("cmd")
+            .args(["/c", "start", "", "ms-settings:privacy-microphone"])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("仅 Windows 平台支持".into())
+    }
+}
+
+/// 主线程不阻塞的麦克风可用性预检 —— 前端可在 Settings / 首启时主动调一次，
+/// 拿到 Err 就显示「未授权」banner + 一键打开设置按钮。
+/// 跟 `audio::orchestrate_start` 的预检走同一函数，结论一致。
+#[tauri::command]
+fn cmd_check_microphone() -> Result<(), String> {
+    audio::preflight_microphone()
 }

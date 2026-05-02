@@ -36,6 +36,11 @@ pub struct AccountSnapshot {
     pub state: AuthState,
     pub license: Option<LicenseInfo>,
     pub quota: Option<QuotaInfo>,
+    /// True from process start until `bootstrap()` finishes (success OR
+    /// failure). The React-side WelcomeGate uses this to show "正在恢复
+    /// 账号…" instead of flashing the login screen at users who have a
+    /// stored refresh token waiting to swap.
+    pub bootstrap_in_flight: bool,
 }
 
 /// Inner mutable bag — held behind `Arc<RwLock>` for cheap cloning.
@@ -48,6 +53,11 @@ struct Inner {
     last_seen_plan: Option<String>,
     /// In-memory only — never written to disk. Spec §4.3.
     access_token: Option<String>,
+    /// See `AccountSnapshot.bootstrap_in_flight`. Default true so the very
+    /// first frontend snapshot reads as "loading" (since `bootstrap()` is
+    /// kicked async and may not have set the flag yet by the time React
+    /// asks for the initial state).
+    bootstrap_in_flight: bool,
 }
 
 /// Cloneable handle to the global account state. Wraps the API client +
@@ -65,6 +75,15 @@ pub struct Account {
 }
 
 impl Account {
+    /// AppHandle accessor —— state.rs 在 hotkey 路径要召唤主窗口（Notice
+    /// 配套），但 state 本身不持 AppHandle。Account 是 state 之外唯一稳定
+    /// 持有 handle 的 Arc，借它的 handle 复用即可。pub(crate) 限制可见。
+    pub(crate) fn app_handle(&self) -> &AppHandle {
+        &self.handle
+    }
+}
+
+impl Account {
     /// Construct + wire. The `ApiClient` callbacks loop back into us via
     /// weak-style `Arc` so the API layer stays decoupled from concrete
     /// state.
@@ -75,6 +94,7 @@ impl Account {
             quota: None,
             last_seen_plan: None,
             access_token: None,
+            bootstrap_in_flight: true,
         }));
         let refresh_lock = Arc::new(AsyncMutex::new(()));
 
@@ -192,6 +212,7 @@ impl Account {
             state: g.state.clone(),
             license: g.license.clone(),
             quota: g.quota.clone(),
+            bootstrap_in_flight: g.bootstrap_in_flight,
         }
     }
 
@@ -209,6 +230,37 @@ impl Account {
     /// Read access token (for ASR proxy + future authed direct calls).
     pub fn access_token(&self) -> Option<String> {
         self.inner.read().access_token.clone()
+    }
+
+    /// Force a refresh-token swap right now. Used by `asr::tititalk_cloud_transcribe`
+    /// to recover from a 401 — that path uses raw reqwest multipart so it can't
+    /// piggyback on `ApiClient::send_with_retry`'s automatic 401 → refresh dance.
+    /// Skips the single-flight mutex (low-frequency, contention vanishingly
+    /// unlikely on the ASR path), but still rolls the refresh token per spec §5.1.
+    pub async fn try_refresh_now(&self) -> Result<(), String> {
+        let refresh = keystore::load_refresh()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "无 refresh token，请重新登录".to_string())?;
+        match auth::perform_refresh(&self.api, &refresh).await {
+            Ok((access, new_refresh)) => {
+                if let Err(e) = keystore::save_refresh(&new_refresh) {
+                    log::warn!("save_refresh after rotation failed: {e}");
+                }
+                self.inner.write().access_token = Some(access);
+                Ok(())
+            }
+            Err(e) => {
+                if e.code() == Some("refresh_invalid") || e.status() == Some(401) {
+                    let _ = keystore::clear();
+                    let mut w = self.inner.write();
+                    w.access_token = None;
+                    w.state = AuthState::Unauthenticated;
+                    drop(w);
+                    self.emit_state();
+                }
+                Err(e.friendly_message())
+            }
+        }
     }
 
     /// Forward an X-User-Plan header observation. Mirrors what the api_client
@@ -240,9 +292,52 @@ impl Account {
     /// Called once at app launch. Try to swap a stored refresh for an
     /// access token; on success load /me and start sync. Failure is
     /// silent — user will see logged-out state and can hit Login.
+    ///
+    /// 30s 全局超时：refresh 端点理论上 15s timeout 就该回，但 DNS 阻塞、
+    /// 路由黑洞、企业 firewall 静默 drop 等 corner case 会让单次请求超过
+    /// reqwest connect_timeout（8s）+ request timeout（15s）的纸面预算。
+    /// 这里加一道兜底：30s 还没结束就直接 fail-open（清 refresh + 当作未
+    /// 登录），避免 WelcomeGate 永远卡 loader screen。用户能至少看到登录
+    /// 按钮去重试。
     pub async fn bootstrap(&self) {
+        const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
+        match tokio::time::timeout(BOOTSTRAP_TIMEOUT, self.bootstrap_inner()).await {
+            Ok(()) => {}
+            Err(_) => {
+                log::warn!("bootstrap timed out after 30s — falling back to logged-out");
+                // 不 clear keystore —— 可能只是这次网络抖，下次启动还想用 refresh
+                // 重连。flip flag + state 让用户能看到登录按钮。
+                self.inner.write().bootstrap_in_flight = false;
+                self.emit_state();
+            }
+        }
+        // Schedule a periodic license re-check every 24h.
+        let me = self.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
+                let auth = me.inner.read().state.clone();
+                if matches!(auth, AuthState::Authenticated { .. }) {
+                    if let Ok(lic) = auth::fetch_license(&me.api).await {
+                        license::save(&lic);
+                        me.inner.write().license = Some(lic);
+                        let snap = me.snapshot();
+                        let _ = me.handle.emit("account-state", &snap);
+                    }
+                }
+            }
+        });
+    }
+
+    /// 实际 bootstrap 流程 —— 拆出来好让外层套 timeout。
+    async fn bootstrap_inner(&self) {
         let stored = keystore::load_refresh();
         let Some(refresh) = stored.filter(|s| !s.is_empty()) else {
+            // No stored refresh — flip the in-flight flag off so the
+            // WelcomeGate stops showing the loader and lets the user
+            // click the login button.
+            self.inner.write().bootstrap_in_flight = false;
+            self.emit_state();
             return;
         };
         // Direct-call into perform_refresh (skip the single-flight
@@ -262,22 +357,11 @@ impl Account {
                 let _ = keystore::clear();
             }
         }
-        // Schedule a periodic license re-check every 24h.
-        let me = self.clone();
-        tauri::async_runtime::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
-                let auth = me.inner.read().state.clone();
-                if matches!(auth, AuthState::Authenticated { .. }) {
-                    if let Ok(lic) = auth::fetch_license(&me.api).await {
-                        license::save(&lic);
-                        me.inner.write().license = Some(lic);
-                        let snap = me.snapshot();
-                        let _ = me.handle.emit("account-state", &snap);
-                    }
-                }
-            }
-        });
+        // Whatever path we took above (success / wipe), bootstrap is done.
+        // emit_state pushes the new snapshot so the WelcomeGate exits the
+        // loader screen.
+        self.inner.write().bootstrap_in_flight = false;
+        self.emit_state();
     }
 
     /// Kick off /api/auth/desktop/init → open browser → wait for callback.
@@ -307,6 +391,8 @@ impl Account {
                                     "登录超时（{} 分钟未完成），请重新发起。",
                                     expires_in / 60
                                 ),
+                                code: Some("login_timeout".into()),
+                                manage_url: None,
                             };
                             drop(w);
                             me.emit_state();
@@ -316,12 +402,27 @@ impl Account {
                 Ok(())
             }
             Err(e) => {
-                let msg = if e.code() == Some("device_limit_reached") {
-                    "已绑定 3 台设备，请先在 https://tititalk.com/dashboard/devices 解绑一台".into()
+                // Prefer server-provided message: device_limit_reached returns
+                // "已绑定 3/3 台设备 ..." with the actual counts (flagship is 5,
+                // not 3 — hardcoding "3 台" was misleading once flagship users
+                // hit the wall).
+                let code = e.code().map(String::from);
+                let manage_url = e.extra_str("manage_url");
+                let msg = if code.as_deref() == Some("device_limit_reached") {
+                    let m = e.message();
+                    if m.is_empty() {
+                        "设备已达上限，请到管理页解绑一台。".into()
+                    } else {
+                        m.to_string()
+                    }
                 } else {
-                    format!("登录启动失败：{e}")
+                    e.friendly_message()
                 };
-                self.inner.write().state = AuthState::Error { message: msg.clone() };
+                self.inner.write().state = AuthState::Error {
+                    message: msg.clone(),
+                    code,
+                    manage_url,
+                };
                 self.emit_state();
                 Err(msg)
             }
@@ -351,6 +452,8 @@ impl Account {
             log::warn!("auth-callback: session_id mismatch");
             self.inner.write().state = AuthState::Error {
                 message: "登录会话不匹配，请重新发起登录".into(),
+                code: Some("session_mismatch".into()),
+                manage_url: None,
             };
             self.emit_state();
             return;
@@ -360,8 +463,14 @@ impl Account {
         }
         self.inner.write().access_token = Some(access);
         if let Err(e) = self.load_me_and_start_sync().await {
+            // 这里 e 是 ApiError —— 用 friendly_message 消化掉 transport raw 文。
+            let code = e.code().map(String::from);
+            let manage_url = e.extra_str("manage_url");
+            let msg = e.friendly_message();
             self.inner.write().state = AuthState::Error {
-                message: format!("拉取用户信息失败：{e}"),
+                message: format!("拉取用户信息失败：{msg}"),
+                code,
+                manage_url,
             };
             self.emit_state();
         }
@@ -394,12 +503,44 @@ impl Account {
     pub fn refresh_license_and_quota_in_background(&self) {
         let me = self.clone();
         tauri::async_runtime::spawn(async move {
-            if let Ok(lic) = auth::fetch_license(&me.api).await {
-                license::save(&lic);
-                me.inner.write().license = Some(lic);
+            // 3-attempt back-off (0/2/5s). Mirror of Mac. Without retry,
+            // a single startup-time blip leaves `license` / `quota` nil,
+            // `can_use_cloud()` becomes over-permissive, and the user's
+            // first cloud call lands as a scary 402/429 instead of a
+            // friendly "loading…" UI state.
+            let delays: [u64; 3] = [0, 2, 5];
+            for (i, d) in delays.iter().enumerate() {
+                if *d > 0 {
+                    tokio::time::sleep(Duration::from_secs(*d)).await;
+                }
+                match auth::fetch_license(&me.api).await {
+                    Ok(lic) => {
+                        license::save(&lic);
+                        me.inner.write().license = Some(lic);
+                        break;
+                    }
+                    Err(e) => log::info!(
+                        "license fetch attempt {}/{} failed: {e}",
+                        i + 1,
+                        delays.len()
+                    ),
+                }
             }
-            if let Ok(q) = auth::fetch_quota(&me.api).await {
-                me.inner.write().quota = Some(q);
+            for (i, d) in delays.iter().enumerate() {
+                if *d > 0 {
+                    tokio::time::sleep(Duration::from_secs(*d)).await;
+                }
+                match auth::fetch_quota(&me.api).await {
+                    Ok(q) => {
+                        me.inner.write().quota = Some(q);
+                        break;
+                    }
+                    Err(e) => log::info!(
+                        "quota fetch attempt {}/{} failed: {e}",
+                        i + 1,
+                        delays.len()
+                    ),
+                }
             }
             me.emit_state();
         });
@@ -413,6 +554,11 @@ impl Account {
         }
         let _ = keystore::clear();
         license::clear();
+        // PIPL：换账号 / 共享 PC 时旧 transcript JSONL 不应让新登录用户看见。
+        // remove_file 失败（被占用 / 权限）只 warn，logout 流程不阻塞。
+        if let Err(e) = crate::history::clear_all() {
+            log::warn!("logout: clear history failed: {e}");
+        }
         {
             let mut w = self.inner.write();
             w.access_token = None;
@@ -433,42 +579,49 @@ impl Account {
     /// Pull the public plan/feature catalog. Used by the upgrade UI to
     /// avoid hardcoding plan codes / prices / features in the client.
     pub async fn fetch_plans(&self) -> Result<billing::PlansCatalog, String> {
-        billing::fetch_plans(&self.api).await.map_err(|e| e.to_string())
+        billing::fetch_plans(&self.api).await.map_err(|e| e.friendly_message())
     }
 
     /// Place a checkout order — server returns pay_url that the UI opens
     /// in the user's browser; UI then polls `get_order` for status.
     pub async fn billing_checkout(&self, plan: &str) -> Result<billing::CheckoutResp, String> {
-        billing::checkout(&self.api, plan).await.map_err(|e| e.to_string())
+        billing::checkout(&self.api, plan).await.map_err(|e| e.friendly_message())
     }
 
     pub async fn billing_get_order(&self, order_id: i64) -> Result<billing::OrderInfo, String> {
-        billing::get_order(&self.api, order_id).await.map_err(|e| e.to_string())
+        billing::get_order(&self.api, order_id).await.map_err(|e| e.friendly_message())
     }
 
     /// Refresh /me after a successful checkout so plan/pro_unlocked_at flip
     /// in the UI immediately. Mirrors `loadMe()` on macOS.
+    ///
+    /// (B6) checkout 成功后单调 reload_me 不够 —— 后端 plan 已变但 quota
+    /// 上限还在用旧 plan 计算，UI 看到「升级 Pro 但 quota 还是 18k」诡异
+    /// 状态。这里把 license + quota 一并刷，三件套同步。失败 best-effort，
+    /// 上层 reload_me 成功就算成功，license/quota 会被周期任务接管。
     pub async fn reload_me(&self) -> Result<(), String> {
         match auth::fetch_me(&self.api).await {
             Ok(user) => {
                 self.inner.write().state = AuthState::Authenticated { user };
                 self.emit_state();
+                // 触发 license + quota 后台刷新（带 3 次重试，0/2/5s）
+                self.refresh_license_and_quota_in_background();
                 Ok(())
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e.friendly_message()),
         }
     }
 
     pub async fn list_devices(&self) -> Result<Vec<DeviceInfo>, String> {
         auth::list_devices(&self.api)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.friendly_message())
     }
 
     pub async fn unbind_device(&self, device_id: i64) -> Result<(), String> {
         auth::unbind_device(&self.api, device_id)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.friendly_message())
     }
 
     pub async fn resolve_conflict(&self, action: ConflictResolution) {
@@ -484,6 +637,13 @@ impl Account {
         if let Some(s) = s {
             s.schedule_put();
         }
+    }
+
+    /// 拿到底层 CloudConfigSync —— 仅供 tray graceful_quit 在退出前调
+    /// `.stop()` 排空 in-flight PUT。在线时 sync 是 None（用户没登录），
+    /// 所以返 Option。
+    pub async fn cloud_sync(&self) -> Option<Arc<CloudConfigSync>> {
+        self.sync.lock().await.clone()
     }
 
     fn emit_state(&self) {

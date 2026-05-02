@@ -23,7 +23,11 @@ export type AuthState =
   | { kind: "unauthenticated" }
   | { kind: "authenticating"; session_id: string }
   | { kind: "authenticated"; user: User }
-  | { kind: "error"; message: string };
+  /** `code` 是后端 error code（device_limit_reached / login_timeout / refresh_invalid /
+   *  session_mismatch / network_offline 等），UI 用它精确决定要不要弹专项按钮。
+   *  `manage_url` 来自服务端 detail（device_limit_reached 才有），用结构化字段
+   *  避免 message.includes("dashboard/devices") 这种脆弱嗅探。 */
+  | { kind: "error"; message: string; code?: string; manage_url?: string };
 
 export interface LicenseInfo {
   plan: string;
@@ -59,6 +63,11 @@ export interface AccountSnapshot {
   state: AuthState;
   license: LicenseInfo | null;
   quota: QuotaInfo | null;
+  /// True from process start until `bootstrap()` finishes (success or
+  /// failure). Used by the WelcomeGate to render "正在恢复账号…" instead
+  /// of flashing the login screen at users with a stored refresh token
+  /// that's mid-swap.
+  bootstrap_in_flight: boolean;
 }
 
 export interface DeviceInfo {

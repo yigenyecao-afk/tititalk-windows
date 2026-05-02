@@ -22,7 +22,18 @@ pub enum AuthState {
     Unauthenticated,
     Authenticating { session_id: String },
     Authenticated { user: User },
-    Error { message: String },
+    /// `code` 是后端返回的错误码（device_limit_reached / refresh_invalid 等），
+    /// 让 UI 能精确决定要不要弹「打开设备管理」之类的 actionable 按钮，而不
+    /// 是 `message.contains("dashboard/devices")` 这种脆弱嗅探。
+    /// `manage_url` 来自 device_limit_reached detail 里 server 直给的 url；
+    /// 没有的错误就是 None。
+    Error {
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        manage_url: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

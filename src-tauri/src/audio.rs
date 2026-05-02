@@ -66,7 +66,17 @@ static ACTIVE: once_cell::sync::Lazy<Mutex<Option<CaptureHandle>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 
 pub async fn orchestrate_start(state: Arc<AppState>) {
+    // 权限预检：在 set_phase(Recording) 之前确认麦克风可用，避免「pill 亮了
+    // 红点用户开始说话，结果系统弹框遮住、直到松手才发现没录到」。预检即
+    // 调用 default_input_config —— 跟真录音同一条路径，最准确，比只查
+    // device.name() 靠谱。失败直接 Notice + 不进入 Recording phase。
+    if let Err(reason) = preflight_microphone() {
+        state.emit(PipelineEvent::Notice { message: reason });
+        return;
+    }
+
     state.set_phase(PipelinePhase::Recording);
+    state.emit(PipelineEvent::Sound { sound: "start".into() });
 
     let stop_flag = Arc::new(Mutex::new(false));
     let (tx, rx) = oneshot::channel::<anyhow::Result<CapturedAudio>>();
@@ -89,6 +99,7 @@ pub async fn orchestrate_start(state: Arc<AppState>) {
 
 pub async fn orchestrate_stop(state: Arc<AppState>) {
     state.set_phase(PipelinePhase::Stopping);
+    state.emit(PipelineEvent::Sound { sound: "stop".into() });
 
     let rx = {
         let mut active = ACTIVE.lock();
@@ -156,7 +167,10 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
             }
             Err(e) => {
                 log::warn!("stylist failed, using raw: {e}");
-                state.emit(PipelineEvent::Error {
+                // Notice instead of Error: the pipeline degraded gracefully
+                // (raw transcript will still be inserted), so the user
+                // shouldn't see the same red banner that "ASR 调用失败" gets.
+                state.emit(PipelineEvent::Notice {
                     message: format!("润色失败，已用原文：{e}"),
                 });
                 raw.clone()
@@ -189,6 +203,27 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     }
 }
 
+/// 录音前轻量级麦克风可用性 + 权限预检。
+/// 走 cpal 同一条路径（host → default_input_device → default_input_config）
+/// —— 跟真录音失败的根因一致，不会出现「预检过了，真录音又炸」。
+/// 返回 Ok(()) 代表可以走，Err(message) 是给用户看的人话（不带 internal err）。
+pub fn preflight_microphone() -> Result<(), String> {
+    let host = cpal::default_host();
+    let device = host.default_input_device().ok_or_else(|| {
+        "找不到麦克风。请插好麦克风，或到「Windows 设置 → 隐私和安全 → 麦克风」开启。".to_string()
+    })?;
+    device.default_input_config().map_err(|e| {
+        log::warn!("preflight cfg err: {e}");
+        // cpal 的 default_input_config 失败几乎都是权限或独占；不区分细节，
+        // 给用户最 actionable 的指引。
+        "麦克风暂时不可用。常见原因：① Windows 隐私设置里 TiTiTalk \
+         没有麦克风权限；② 被其他应用独占（QQ、Teams、Zoom 等）。\
+         点「打开 Windows 麦克风设置」开启权限，或先关掉抢占的应用。"
+            .to_string()
+    })?;
+    Ok(())
+}
+
 fn capture_blocking(
     stop_flag: Arc<Mutex<bool>>,
     event_tx: tokio::sync::mpsc::UnboundedSender<PipelineEvent>,
@@ -196,10 +231,16 @@ fn capture_blocking(
     let host = cpal::default_host();
     let device = host
         .default_input_device()
-        .ok_or_else(|| anyhow!("找不到默认输入设备（麦克风）"))?;
+        .ok_or_else(|| anyhow!(
+            "找不到麦克风。请插好麦克风，并到 Windows 设置 → 隐私和安全 → 麦克风 \
+             允许 TiTiTalk 访问。"
+        ))?;
     let supported = device
         .default_input_config()
-        .context("默认输入配置读取失败")?;
+        .map_err(|e| anyhow!(
+            "麦克风配置读取失败：{e}。常见原因：Windows 隐私设置里 TiTiTalk \
+             没有麦克风权限，或被其他应用独占。"
+        ))?;
 
     let src_sr = supported.sample_rate().0;
     let channels = supported.channels() as usize;
@@ -212,7 +253,23 @@ fn capture_blocking(
     let collected_cb = collected.clone();
     let event_tx_cb = event_tx.clone();
 
-    let err_fn = |e| log::error!("audio stream error: {e}");
+    // 录音中设备拔出 / driver 抽风时 cpal 会从 OS 侧推 err 上来。原来这里
+    // 只 log 不通知前端 —— 用户面对一段沉默的「录音中…」直到松手才知道炸了。
+    // 现在升级为 Notice，pill 上能立刻看到。capture 线程仍会按 stop_flag 退
+    // 出，由 orchestrate_stop 接管 → 走完正常 Failed/Done 流。
+    let err_event_tx = event_tx.clone();
+    let err_fn = move |e: cpal::StreamError| {
+        log::error!("audio stream error: {e}");
+        let msg = match &e {
+            cpal::StreamError::DeviceNotAvailable => {
+                "麦克风设备已断开（拔出 USB 麦 / 蓝牙断连？）。请重新插上后再试。".to_string()
+            }
+            cpal::StreamError::BackendSpecific { err } => {
+                format!("音频驱动异常：{}。请重新插拔麦克风或重启 TiTiTalk。", err)
+            }
+        };
+        let _ = err_event_tx.send(PipelineEvent::Notice { message: msg });
+    };
 
     let stream = match format {
         SampleFormat::F32 => device.build_input_stream(
@@ -244,7 +301,11 @@ fn capture_blocking(
         other => return Err(anyhow!("不支持的采样格式 {other:?}")),
     };
 
-    stream.play().context("启动音频流失败")?;
+    stream.play().map_err(|e| anyhow!(
+        "启动音频流失败：{e}。如果是首次使用，请在 Windows 系统弹出的「允许 \
+         TiTiTalk 访问麦克风」对话框点同意；已经拒绝过的话，去「设置 → 隐私 \
+         → 麦克风」手动开启。"
+    ))?;
 
     let start = std::time::Instant::now();
     while !*stop_flag.lock() {
