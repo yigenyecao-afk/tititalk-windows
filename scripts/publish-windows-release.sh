@@ -57,10 +57,14 @@ if [[ ! -f "$LOCAL_SIG" ]]; then
     gh release download "v$VERSION" --repo yigenyecao-afk/tititalk-windows \
         -p "$SIG_NAME" -O "$LOCAL_SIG" 2>/dev/null || true
 fi
-if [[ ! -f "$LOCAL_UPDATE_JSON" ]]; then
-    gh release download "v$VERSION" --repo yigenyecao-afk/tititalk-windows \
-        -p "$UPDATE_JSON_NAME" -O "$LOCAL_UPDATE_JSON" 2>/dev/null || true
-fi
+# windows-update.json 跟 .exe / .sig 不一样：文件名不带版本号（updater
+# 协议要求固定 URL），所以本地缓存命中后会用旧版本的 json 把服务端覆盖
+# 成上一版（实际事故：v0.7.0 publish 时本地还留着 v0.5.0 的，update.json
+# 上线后还是写 v0.5.0 → 客户端 updater 跳过 v0.7.0）。每次 publish 都
+# 强制重拉对应 tag 的 fresh 版本。
+rm -f "$LOCAL_UPDATE_JSON"
+gh release download "v$VERSION" --repo yigenyecao-afk/tititalk-windows \
+    -p "$UPDATE_JSON_NAME" -O "$LOCAL_UPDATE_JSON" 2>/dev/null || true
 
 # 2. 校验 SHA256（如果 metadata.json 存在）
 SHA256="$(shasum -a 256 "$LOCAL_EXE" | awk '{print $1}')"
