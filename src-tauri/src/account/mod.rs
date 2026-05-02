@@ -30,6 +30,23 @@ use crate::state::AppState;
 
 type AppStateArc = Arc<AppState>;
 
+/// /api/polish 响应。Stylist::polish 在 cloud 路径上拿这个回填 quota。
+/// real_input/output_tokens 是 LLM 实际 prompt/completion 计数（用来在 history
+/// 里展示真实成本）；cost_tokens 是按 MODEL_DISPLAY_MULT 折算后扣 daily_usage
+/// 的口径（跟 ASR 共池）。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CloudPolishResponse {
+    pub polished: String,
+    pub model: String,
+    pub real_input_tokens: i64,
+    pub real_output_tokens: i64,
+    pub cost_tokens: i64,
+    pub used_tokens: i64,
+    pub limit_tokens: i64,
+    pub remaining_tokens: i64,
+    pub provider: Option<String>,
+}
+
 /// Snapshot serialised to the frontend on `cmd_account_get_state`.
 #[derive(Debug, Clone, Serialize)]
 pub struct AccountSnapshot {
@@ -230,6 +247,68 @@ impl Account {
     /// Read access token (for ASR proxy + future authed direct calls).
     pub fn access_token(&self) -> Option<String> {
         self.inner.read().access_token.clone()
+    }
+
+    /// 当前用户 plan（free / pro_annual / pro_flagship / pro_lifetime）。
+    /// 未登录时 None。stylist::polish 用它在 cloud 路径上做 free→qwen-flash
+    /// 静默降级，避开后端 402 model_pro_locked。
+    pub fn current_plan(&self) -> Option<String> {
+        let g = self.inner.read();
+        match &g.state {
+            auth::AuthState::Authenticated { user } => Some(user.plan.clone()),
+            _ => None,
+        }
+    }
+
+    /// /api/polish 服务端代理。Stylist::polish 在 `engine == "tititalk_cloud"`
+    /// 走这条路 —— 用户没 BYOK key，付的是平台 token 配额。
+    /// 401 走 ApiClient 自带 refresh-then-retry；timeout 30s（client 默认 15s
+    /// 不够润色慢路径），plan-tap 也跟正常调用一样自动联动 license 刷新。
+    /// 调用成功后把响应里的 used/limit/remaining_tokens 一并写回 inner.quota，
+    /// UI 的 quota bar 不必等下一次 /api/me/quota 后台轮询。
+    pub async fn cloud_polish(
+        &self,
+        text: &str,
+        persona: &str,
+        model: &str,
+    ) -> Result<CloudPolishResponse, ApiError> {
+        #[derive(serde::Serialize)]
+        struct Req<'a> {
+            text: &'a str,
+            persona: &'a str,
+            model: &'a str,
+        }
+        let req = Req { text, persona, model };
+        let resp: CloudPolishResponse = self
+            .api
+            .post_with_timeout("/api/polish", &req, true, std::time::Duration::from_secs(30))
+            .await?;
+        // 顺手把 quota 三元组（used / limit / remaining）灌回 inner —— 后续
+        // /api/me/quota 后台 refresh 会重写整份 QuotaInfo，这里只是图眼动一下。
+        {
+            let mut w = self.inner.write();
+            let prev = w.quota.clone();
+            let date = prev
+                .as_ref()
+                .map(|q| q.date.clone())
+                .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+            let plan = prev.as_ref().and_then(|q| q.plan.clone());
+            let q = QuotaInfo {
+                date,
+                plan,
+                limit_tokens: Some(resp.limit_tokens),
+                used_tokens: Some(resp.used_tokens),
+                remaining_tokens: Some(resp.remaining_tokens),
+                limit_cents: prev.as_ref().and_then(|q| q.limit_cents),
+                used_cents: prev.as_ref().map(|q| q.used_cents).unwrap_or(0),
+                remaining_cents: prev.as_ref().and_then(|q| q.remaining_cents),
+                call_count: prev.as_ref().and_then(|q| q.call_count),
+                reset_at: prev.as_ref().map(|q| q.reset_at.clone()).unwrap_or_default(),
+            };
+            w.quota = Some(q);
+        }
+        self.emit_state();
+        Ok(resp)
     }
 
     /// Force a refresh-token swap right now. Used by `asr::tititalk_cloud_transcribe`

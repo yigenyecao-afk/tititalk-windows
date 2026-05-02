@@ -159,7 +159,7 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     // never blocks insertion (paste must always happen on the user's gesture).
     let text = if cfg.stylist_enabled {
         state.set_phase(PipelinePhase::Polishing);
-        match stylist::polish(&cfg, &raw).await {
+        match stylist::polish(&cfg, &raw, &state).await {
             Ok(p) if !p.trim().is_empty() => p,
             Ok(_) => {
                 log::warn!("stylist returned empty; falling back to raw");

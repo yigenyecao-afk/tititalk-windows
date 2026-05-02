@@ -199,14 +199,38 @@ impl ApiClient {
         authed: bool,
     ) -> Result<Resp, ApiError> {
         let bytes = self
-            .send_with_retry(Method::POST, path, Some(serde_json::to_vec(body).map_err(|e| ApiError::Decode(e.to_string()))?), authed, &[])
+            .send_with_retry(Method::POST, path, Some(serde_json::to_vec(body).map_err(|e| ApiError::Decode(e.to_string()))?), authed, &[], None)
+            .await?;
+        decode(&bytes)
+    }
+
+    /// Post variant with a per-request timeout override —— /api/polish 后端
+    /// DEFAULT_TIMEOUT_SEC=25s, 默认 client timeout 15s 不够，需单独拉到 30s。
+    /// 走同一个 `send_with_retry`（401 refresh + plan-tap 都复用），只在
+    /// 最底层 RequestBuilder 加 `.timeout(t)` 覆盖。
+    pub async fn post_with_timeout<Req: Serialize, Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &Req,
+        authed: bool,
+        timeout: std::time::Duration,
+    ) -> Result<Resp, ApiError> {
+        let bytes = self
+            .send_with_retry(
+                Method::POST,
+                path,
+                Some(serde_json::to_vec(body).map_err(|e| ApiError::Decode(e.to_string()))?),
+                authed,
+                &[],
+                Some(timeout),
+            )
             .await?;
         decode(&bytes)
     }
 
     pub async fn get<Resp: DeserializeOwned>(&self, path: &str) -> Result<Resp, ApiError> {
         let bytes = self
-            .send_with_retry(Method::GET, path, None, true, &[])
+            .send_with_retry(Method::GET, path, None, true, &[], None)
             .await?;
         decode(&bytes)
     }
@@ -224,6 +248,7 @@ impl ApiClient {
                 Some(serde_json::to_vec(body).map_err(|e| ApiError::Decode(e.to_string()))?),
                 true,
                 extra_headers,
+                None,
             )
             .await?;
         decode(&bytes)
@@ -231,7 +256,7 @@ impl ApiClient {
 
     pub async fn delete(&self, path: &str) -> Result<(), ApiError> {
         let _ = self
-            .send_with_retry(Method::DELETE, path, None, true, &[])
+            .send_with_retry(Method::DELETE, path, None, true, &[], None)
             .await?;
         Ok(())
     }
@@ -245,9 +270,10 @@ impl ApiClient {
         body: Option<Vec<u8>>,
         authed: bool,
         extra_headers: &[(&str, String)],
+        timeout: Option<std::time::Duration>,
     ) -> Result<Vec<u8>, ApiError> {
         let resp = self
-            .send_once(method.clone(), path, body.clone(), authed, extra_headers)
+            .send_once(method.clone(), path, body.clone(), authed, extra_headers, timeout)
             .await?;
         let status = resp.status();
         if status == StatusCode::UNAUTHORIZED && authed {
@@ -264,7 +290,7 @@ impl ApiClient {
                 });
             }
             let resp2 = self
-                .send_once(method, path, body, authed, extra_headers)
+                .send_once(method, path, body, authed, extra_headers, timeout)
                 .await?;
             return self.finalize(resp2).await;
         }
@@ -301,6 +327,7 @@ impl ApiClient {
         body: Option<Vec<u8>>,
         authed: bool,
         extra_headers: &[(&str, String)],
+        timeout: Option<std::time::Duration>,
     ) -> Result<Response, ApiError> {
         let url = format!("{BASE_URL}{path}");
         let mut req = self.http.request(method, &url);
@@ -319,6 +346,9 @@ impl ApiClient {
         }
         for (k, v) in extra_headers {
             req = req.header(*k, v);
+        }
+        if let Some(t) = timeout {
+            req = req.timeout(t);
         }
         Ok(req.send().await?)
     }
