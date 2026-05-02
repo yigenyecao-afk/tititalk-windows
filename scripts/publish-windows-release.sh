@@ -62,9 +62,19 @@ fi
 # 成上一版（实际事故：v0.7.0 publish 时本地还留着 v0.5.0 的，update.json
 # 上线后还是写 v0.5.0 → 客户端 updater 跳过 v0.7.0）。每次 publish 都
 # 强制重拉对应 tag 的 fresh 版本。
+#
+# v0.7.1 又踩了：GHA 把 run status 标 completed 时 windows-update.json
+# 上传还在进行中（最后一个 asset），导致这里 silent fail，updater 通道
+# 漏更。改成 5 次重试 + 5s 间隔，给 GHA assets 上传留时间。
 rm -f "$LOCAL_UPDATE_JSON"
-gh release download "v$VERSION" --repo yigenyecao-afk/tititalk-windows \
-    -p "$UPDATE_JSON_NAME" -O "$LOCAL_UPDATE_JSON" 2>/dev/null || true
+for i in 1 2 3 4 5; do
+    if gh release download "v$VERSION" --repo yigenyecao-afk/tititalk-windows \
+        -p "$UPDATE_JSON_NAME" -O "$LOCAL_UPDATE_JSON" 2>/dev/null && [[ -s "$LOCAL_UPDATE_JSON" ]]; then
+        break
+    fi
+    echo "==> windows-update.json 还没上线（attempt $i/5），等 5s 重试…"
+    sleep 5
+done
 
 # 2. 校验 SHA256（如果 metadata.json 存在）
 SHA256="$(shasum -a 256 "$LOCAL_EXE" | awk '{print $1}')"
