@@ -22,9 +22,13 @@ const QWEN_CHAT_ENDPOINT: &str =
     "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 const OPENAI_CHAT_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
 
-/// BYOK 路径硬 timeout 8s 不变 —— 用户自家 key 不希望卡 paste。
-/// tititalk_cloud 路径走 ApiClient 单独 30s timeout（per-request override）。
-const STYLIST_TIMEOUT_SECS: u64 = 8;
+/// (v0.7.4 polish-fix) BYOK 路径 timeout 8s → 20s。原 8s 对 qwen-flash
+/// 短文本够用，但 qwen-plus / qwen-max 长文本经常 8-15s，每次都 timeout
+/// 报错走 raw fallback，用户体感「润色失效」。20s 跟 Mac BYOK watchdog
+/// 同口径，给 LLM 充足响应时间。
+/// tititalk_cloud 路径走 ApiClient post_with_timeout 35s（v0.7.4 由 30s 拉，
+/// 保证服务端 25s timeout 一定先到，client 只兜 forever-hang）。
+const STYLIST_TIMEOUT_SECS: u64 = 20;
 
 /// 后端 4 个 persona key（client 文案归并到这 4 个，跟 backend 写死的 prompt
 /// 表对齐）。client 这边只暴露 friendly/formal/mixed_zh_en —— code 留给未来。

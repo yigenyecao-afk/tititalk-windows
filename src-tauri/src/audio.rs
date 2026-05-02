@@ -161,16 +161,45 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     // never blocks insertion (paste must always happen on the user's gesture).
     let text = if cfg.stylist_enabled {
         state.set_phase(PipelinePhase::Polishing);
+        // (v0.7.4 polish-fix) 全程日志：起手 / 结束 / 失败 都打 elapsed + engine
+        // + model + text_len，复现「润色超时」时一眼看穿走的 cloud 还是 BYOK，
+        // 慢在哪一步。
+        let polish_t0 = std::time::Instant::now();
+        log::info!(
+            "polish start: engine={} model={} stylist_persona={} text_len={}",
+            cfg.engine, cfg.stylist_model, cfg.stylist_persona, raw.chars().count()
+        );
         match stylist::polish(&cfg, &raw, &state).await {
-            Ok(p) if !p.trim().is_empty() => p,
+            Ok(p) if !p.trim().is_empty() => {
+                log::info!(
+                    "polish done: engine={} elapsed={:.2}s output_len={}",
+                    cfg.engine, polish_t0.elapsed().as_secs_f32(), p.chars().count()
+                );
+                p
+            }
             Ok(_) => {
-                log::warn!("stylist returned empty; falling back to raw");
+                log::warn!(
+                    "polish returned empty: engine={} elapsed={:.2}s — falling back to raw",
+                    cfg.engine, polish_t0.elapsed().as_secs_f32()
+                );
+                state.emit(PipelineEvent::Error {
+                    message: "⚠️ 润色返回空，已落原始转写".into(),
+                });
                 raw.clone()
             }
             Err(e) => {
-                log::warn!("stylist failed, using raw: {e}");
-                // 不再 toast —— 用户看到原文已被插入是最强的「润色没成」信号；
-                // 重复一条 toast 反而打断流程（用户报障 v0.7.2 hotfix）。
+                log::warn!(
+                    "polish failed: engine={} elapsed={:.2}s err={e} — falling back to raw",
+                    cfg.engine, polish_t0.elapsed().as_secs_f32()
+                );
+                // (v0.7.4 polish-fix) 旧版本只 log 不通知 UI，用户体感「润色失效
+                // 但没原因」。改 emit Error 让前端 lastError banner 接住具体原因
+                // （pill 已经在显示 raw 了，这条文字补「为什么没润色」信息差）。
+                // 用户之前反馈「不要重复 toast」是指 input-process 错误重复，
+                // polish 失败发一次 banner 是补信息不算重复。
+                state.emit(PipelineEvent::Error {
+                    message: format!("⚠️ 润色失败，已落原始转写：{e}"),
+                });
                 raw.clone()
             }
         }

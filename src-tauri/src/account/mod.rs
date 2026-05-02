@@ -279,9 +279,12 @@ impl Account {
             model: &'a str,
         }
         let req = Req { text, persona, model };
+        // (v0.7.4 polish-fix) 30→35s。后端 polish service DEFAULT_TIMEOUT_SEC=25
+        // 加 polish.py route 处理 + 网络往返，client 给 35s 让服务端的 25s 一定
+        // 先到。原 30s 跟服务端 25s+往返几乎平，偶尔被 client 抢先 timeout。
         let resp: CloudPolishResponse = self
             .api
-            .post_with_timeout("/api/polish", &req, true, std::time::Duration::from_secs(30))
+            .post_with_timeout("/api/polish", &req, true, std::time::Duration::from_secs(35))
             .await?;
         // 顺手把 quota 三元组（used / limit / remaining）灌回 inner —— 后续
         // /api/me/quota 后台 refresh 会重写整份 QuotaInfo，这里只是图眼动一下。
@@ -440,8 +443,25 @@ impl Account {
                 }
             }
             Err(e) => {
-                log::info!("bootstrap refresh failed: {e}; clearing");
-                let _ = keystore::clear();
+                // (v0.7.4 cred-persist) 历史 bug：任何错误都 clear keystore，
+                // 导致用户网络抖（DNS 慢/TLS 握手 / reqwest 15s timeout）就被
+                // 当作未登录，每次启动都要重新登录。改成只在 refresh_token
+                // 真失效（refresh_invalid / 401 / 403）时 clear，其它（网络/
+                // 超时/5xx）保留 keystore，下次启动重试。跟 refresh_with_lock
+                // line 162-167 + try_refresh_now line 343 同源策略。
+                let truly_invalid = e.code() == Some("refresh_invalid")
+                    || e.status() == Some(401)
+                    || e.status() == Some(403);
+                if truly_invalid {
+                    log::info!("bootstrap refresh failed (token invalid: {e}) — clearing keystore");
+                    let _ = keystore::clear();
+                } else {
+                    log::warn!(
+                        "bootstrap refresh failed (transient: {e}) — keeping keystore for next launch"
+                    );
+                    // state 保持 Unauthenticated（用户能看到登录按钮重试），
+                    // 但不删 refresh.bin。用户重启时下一次 bootstrap 还能尝试。
+                }
             }
         }
         // Whatever path we took above (success / wipe), bootstrap is done.
