@@ -71,7 +71,9 @@ pub async fn orchestrate_start(state: Arc<AppState>) {
     // 调用 default_input_config —— 跟真录音同一条路径，最准确，比只查
     // device.name() 靠谱。失败直接 Notice + 不进入 Recording phase。
     if let Err(reason) = preflight_microphone() {
-        state.emit(PipelineEvent::Notice { message: reason });
+        // 用 Error 走 HomeView lastError Banner（sticky），不再用 Notice 弹 toast。
+        // 跟 Mac VoicePipeline 对齐：录音前置错误统一靠 Banner 而非 toast。
+        state.emit(PipelineEvent::Error { message: reason });
         return;
     }
 
@@ -167,12 +169,8 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
             }
             Err(e) => {
                 log::warn!("stylist failed, using raw: {e}");
-                // Notice instead of Error: the pipeline degraded gracefully
-                // (raw transcript will still be inserted), so the user
-                // shouldn't see the same red banner that "ASR 调用失败" gets.
-                state.emit(PipelineEvent::Notice {
-                    message: format!("润色失败，已用原文：{e}"),
-                });
+                // 不再 toast —— 用户看到原文已被插入是最强的「润色没成」信号；
+                // 重复一条 toast 反而打断流程（用户报障 v0.7.2 hotfix）。
                 raw.clone()
             }
         }
@@ -268,7 +266,9 @@ fn capture_blocking(
                 format!("音频驱动异常：{}。请重新插拔麦克风或重启 TiTiTalk。", err)
             }
         };
-        let _ = err_event_tx.send(PipelineEvent::Notice { message: msg });
+        // 用 Error（HomeView lastError Banner sticky）替代 Notice toast，避免
+        // 跟前端音频设备状态显示重复
+        let _ = err_event_tx.send(PipelineEvent::Error { message: msg });
     };
 
     let stream = match format {

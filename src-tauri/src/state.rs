@@ -97,32 +97,33 @@ impl AppState {
                 if !self.account_ready_for_record() {
                     // bootstrap 进行中（refresh token → 拿 access）vs 真未登录
                     // 是不同体验：前者用户已经登过、稍等几秒就好；后者要求
-                    // 用户去主窗口登录。给两种不同的 toast。
+                    // 用户去主窗口登录。
+                    // 用户报障（v0.7.2 hotfix）: 「需要登录」HomeView 已经有 needsLogin Banner，
+                    // 再 toast Notice 重复。改成：未登录 → 只把主窗口拉前（Banner 在那等他）；
+                    // 恢复中 → 保留 Notice（转瞬即逝，无 Banner 替代）。
                     let in_flight = self
                         .account
                         .read()
                         .clone()
                         .map(|a| a.snapshot().bootstrap_in_flight)
                         .unwrap_or(false);
-                    let message = if in_flight {
-                        "正在恢复登录状态…请稍候 1-2 秒再试。".to_string()
+                    if in_flight {
+                        self.emit(PipelineEvent::Notice {
+                            message: "正在恢复登录状态…请稍候 1-2 秒再试。".to_string(),
+                        });
                     } else {
-                        "请先在 TiTiTalk 主窗口登录后再使用语音输入。".to_string()
-                    };
-                    self.emit(PipelineEvent::Notice { message });
-                    if !in_flight {
-                        // bootstrap 中不必把窗口拽前 —— 等几秒就好；拉前反而打断用户。
+                        // 拉主窗口给 Banner 一个被看见的机会，不再叠 toast
                         self.surface_main_window();
                     }
                     return;
                 }
                 // (B3) 配额预检：tititalk_cloud 引擎 + 已知 quota 且 remaining=0
-                // → 不让录。否则用户按住录 5 秒，松手才看到「额度用完」。
-                // 仅 cloud 引擎检查；BYOK / local 不走平台计费。
+                // → 不让录。otherwise 用户按住录 5 秒，松手才看到「额度用完」。
+                // 用 Error 走 lastError Banner（同时触发 UpgradeBanner detect），不用 Notice。
                 let cfg_engine = self.config.read().engine.clone();
                 if cfg_engine == "tititalk_cloud" {
                     if let Some(reason) = self.cloud_quota_block_reason() {
-                        self.emit(PipelineEvent::Notice { message: reason });
+                        self.emit(PipelineEvent::Error { message: reason });
                         return;
                     }
                 }
