@@ -288,10 +288,18 @@ impl Account {
         {
             let mut w = self.inner.write();
             let prev = w.quota.clone();
+            // (v0.7.3 audit fix) 后端配额按 UTC+8 日切（北京时间），
+            // chrono::Utc::now() 在 0:00-8:00 之间会算成「昨天」，
+            // optimistic 写入 quota.date 跟下次 /api/me/quota 拉到的真值不一致，
+            // UI quota bar 会闪一下错误的日期。改用 UTC+8 计算今天。
             let date = prev
                 .as_ref()
                 .map(|q| q.date.clone())
-                .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+                .unwrap_or_else(|| {
+                    let utc8 = chrono::FixedOffset::east_opt(8 * 3600)
+                        .expect("UTC+8 fixed offset always valid");
+                    chrono::Utc::now().with_timezone(&utc8).format("%Y-%m-%d").to_string()
+                });
             let plan = prev.as_ref().and_then(|q| q.plan.clone());
             let q = QuotaInfo {
                 date,

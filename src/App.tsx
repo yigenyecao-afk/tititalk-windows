@@ -71,7 +71,11 @@ export default function App() {
       if (ev.kind === "phase") {
         setPhase(ev.phase);
         setStatusLine(phaseLabel(ev.phase));
-        if (ev.phase === "recording" || ev.phase === "transcribing") {
+        // (v0.7.3 audit fix) lastError 只在「新 session 开始」(recording) 时清。
+        // 之前还在 transcribing 时也清 → 录音中途音频设备断开 / 网络飘的 Error
+        // 在松手瞬间被擦掉，用户只看到「success」假象。Notice transient toast
+        // 仍 3.5s 自动消，错误 Banner 留到下一次成功开始为止。
+        if (ev.phase === "recording") {
           setLastError("");
         }
       } else if (ev.kind === "transcript") {
