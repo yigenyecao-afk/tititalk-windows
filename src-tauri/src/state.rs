@@ -58,6 +58,10 @@ pub struct AppState {
     /// Set in `lib.rs::setup` once the Tauri AppHandle is available.
     /// `None` until then (and in headless tests).
     pub account: RwLock<Option<Account>>,
+    /// (v0.8.4 backlog #5) AppHandle 也存一份，让非 Tauri command 路径
+    /// （比如 LL hook 触发的 assistant::trigger）能拿到 webview window。
+    /// lib.rs setup 内 set 一次。
+    pub app_handle: RwLock<Option<tauri::AppHandle>>,
 }
 
 impl AppState {
@@ -68,6 +72,7 @@ impl AppState {
             current_audio: RwLock::new(None),
             phase: RwLock::new(PipelinePhase::Idle),
             account: RwLock::new(None),
+            app_handle: RwLock::new(None),
         }
     }
 

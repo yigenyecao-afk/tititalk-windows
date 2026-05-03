@@ -65,6 +65,17 @@ export async function openMicSettings(): Promise<void> {
   await invoke("cmd_open_mic_settings");
 }
 
+// (v0.8.4 P1-2) 词汇检测候选 API
+export async function getHotwordCandidates(): Promise<[string, number][]> {
+  return await invoke<[string, number][]>("cmd_hotword_candidates");
+}
+export async function dismissHotwordCandidate(token: string): Promise<void> {
+  await invoke("cmd_hotword_dismiss", { token });
+}
+export async function clearAllHotwordCandidates(): Promise<void> {
+  await invoke("cmd_hotword_clear_all");
+}
+
 /** Common Win32 virtual-key codes the user can pick. */
 export const VK_CHOICES: { vk: number; label: string }[] = [
   { vk: 0x70, label: "F1" },

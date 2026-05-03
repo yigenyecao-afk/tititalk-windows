@@ -59,9 +59,15 @@ pub async fn polish(
         return Ok(raw.to_string());
     }
 
-    // tititalk_cloud：走平台代理，不要 BYOK key。
+    // tititalk_cloud：走平台代理。优先尝试流式 (v0.8.6 #1)，失败 fallback 到一次性。
     if cfg.engine == "tititalk_cloud" {
-        return cloud_polish(cfg, trimmed, state).await;
+        match cloud_polish_stream(cfg, trimmed, state).await {
+            Ok(text) => return Ok(text),
+            Err(e) => {
+                log::warn!("cloud-polish stream failed, fallback to one-shot: {e}");
+                return cloud_polish(cfg, trimmed, state).await;
+            }
+        }
     }
 
     if cfg.api_key.trim().is_empty() {
@@ -74,13 +80,25 @@ pub async fn polish(
         other => return Err(anyhow!("未知引擎 {other}")),
     };
 
-    let sys = persona_system_prompt(&cfg.stylist_persona);
+    // (v0.8.4 typeless 学习 P0 #1+#2 + P1 #4) 把 self-correction + auto-list
+    // + output-language override 三段公共规则拼到 persona prompt 末尾。
+    let mut sys = persona_system_prompt(&cfg.stylist_persona).to_string();
+    sys.push_str(SHARED_POLISH_RULES);
+    if !cfg.output_language_override.trim().is_empty() {
+        sys.push_str(&format!(
+            "\n\n【输出语言覆盖 / Output language override】\n\
+             本次最终结果请用 **{lang}** 输出（即使用户口语用的是别的语言）。\n\
+             翻译时仍遵守上面所有规则：不增不减、不改原意、保留专有名词大小写、\n\
+             代码标识符和找不到合适翻译的人名/品牌名保留原文不翻。",
+            lang = cfg.output_language_override.trim()
+        ));
+    }
 
     let body = ChatRequest {
         model,
         temperature: 0.2,
         messages: vec![
-            ChatMessage { role: "system", content: sys.into() },
+            ChatMessage { role: "system", content: sys.as_str().into() },
             ChatMessage { role: "user", content: trimmed.into() },
         ],
     };
@@ -115,6 +133,65 @@ pub async fn polish(
     Ok(strip_wrapper(&polished))
 }
 
+/// (v0.8.6 #1 streaming polish) /api/polish/stream 真流式 SSE 路径。
+/// 跟 cloud_polish 同款 plan/quota gate，但 LLM token 边到边走 PipelineEvent::Partial
+/// 推到前端 pill —— ASR-final 后 ~100ms 看到首个 polish token，跟 typeless 同款
+/// 「边出字」体感。失败抛错让 polish() 回落到 cloud_polish 一次性路径。
+async fn cloud_polish_stream(
+    cfg: &AppConfig,
+    text: &str,
+    state: &Arc<AppState>,
+) -> anyhow::Result<String> {
+    let account = state
+        .account
+        .read()
+        .clone()
+        .ok_or_else(|| anyhow!("尚未登录 tititalk.com，无法走云端流式润色"))?;
+    let mut model = cfg.stylist_model.clone();
+    if (model == "qwen-plus" || model == "qwen-max")
+        && account.current_plan().as_deref() == Some("free")
+    {
+        log::info!("cloud-polish-stream: free plan can't use {model} → downgrade to qwen-flash");
+        model = "qwen-flash".into();
+    }
+    let persona = map_to_cloud_persona(&cfg.stylist_persona);
+
+    let mut accumulated = String::new();
+    let mut final_polished: Option<String> = None;
+    account
+        .cloud_polish_stream(
+            text, persona, &model, &cfg.polish_intensity,
+            cfg.cjk_auto_space, &cfg.output_language_override,
+            |delta| {
+                accumulated.push_str(delta);
+                // pill 显示渐进 polished 文本——前端 pill PartialText 已存在的
+                // 显示通道，零前端改动。每次发整段 accumulated，pill 用最新值
+                // 覆盖（跟 ASR partial 同 semantics）。
+                state.emit(crate::state::PipelineEvent::Partial {
+                    text: accumulated.clone(),
+                });
+            },
+            |resp| {
+                if resp.over_limit {
+                    log::info!("cloud-polish-stream: over_limit flag set");
+                    state.emit(crate::state::PipelineEvent::Notice {
+                        message: "今日云端额度已贴顶，下次将被挡 — 明天 0 点（北京）重置".into(),
+                    });
+                    let acc2 = account.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = acc2.reload_me().await;
+                    });
+                }
+                final_polished = Some(strip_wrapper(&resp.polished));
+            },
+        )
+        .await
+        .map_err(|e| anyhow!(e))?;
+
+    // SSE 流结束后用 final 事件里的 polished（已含服务端 CJK 兜底）
+    final_polished.ok_or_else(|| anyhow!("流式润色未返回 final 事件"))
+}
+
 /// /api/polish 代理路径。account.cloud_polish 自带 401 refresh-then-retry
 /// + 30s timeout + plan-tap，比 BYOK 路径稳。错误从 ApiError 翻成中文 anyhow
 /// 抛出去，audio.rs 捕获后走「润色失败用原文」兜底。
@@ -141,7 +218,7 @@ async fn cloud_polish(
     let persona = map_to_cloud_persona(&cfg.stylist_persona);
 
     match account
-        .cloud_polish(text, persona, &model, &cfg.polish_intensity, cfg.cjk_auto_space)
+        .cloud_polish(text, persona, &model, &cfg.polish_intensity, cfg.cjk_auto_space, &cfg.output_language_override)
         .await
     {
         Ok(resp) => {
@@ -181,6 +258,23 @@ async fn cloud_polish(
         }
     }
 }
+
+/// (v0.8.4 typeless 学习 P0 #1+#2) 三档 persona 公共追加规则：
+///   • 自我修正处理（"等下"/"不对"/"应该是" 后的内容覆盖前面）
+///   • 自动结构化列表（≥3 个明确并列项渲染成 markdown 列表）
+/// 加在 persona_system_prompt 输出后。
+const SHARED_POLISH_RULES: &str = "\n\n\
+    【自我修正处理】—— 用户说话中途改口\n\
+    口语经常出现「说一半改口」：「发给小张，不对，发给小李」「会议是 3 点，啊不是 4 点」\n\
+    「用 yarn，我意思是 npm」。常见触发词：「不对」「等下」「等等」「啊不」「我的意思是」\n\
+    「应该是」「还是」「重说」「sorry」「不是」「换成」。\n\
+    检测到触发词时，**保留改口后的版本，丢弃改口前那段**。最终只输出用户真正想表达的，\n\
+    触发词本身也不留。如果分不清是真改口还是口癖，原样保留。\n\n\
+    【自动结构化列表】—— 用户明确并列时\n\
+    用户连续说出 **三项或以上** 的明确并列内容（「第一/第二/第三」「一是/二是/三是」\n\
+    「首先/其次/再次/最后」「Step 1 / 2 / 3」「然后是 A / 然后是 B / 然后是 C」），\n\
+    渲染成 markdown 列表（`- 项目` 或 `1. 项目`）。两项或以下保持行内散文。\n\
+    **不要**捏造用户没列出来的项目；**不要**把「我去了 A、B、C」简单并列变列表。";
 
 fn persona_system_prompt(key: &str) -> &'static str {
     match key {

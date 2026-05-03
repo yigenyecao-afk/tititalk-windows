@@ -89,6 +89,35 @@ pub struct AppConfig {
     /// P1-3: 润色强度 "light" / "normal" / "heavy"。默认 "normal" 保留旧行为。
     #[serde(default = "default_polish_intensity")]
     pub polish_intensity: String,
+    // ---- v0.8.4 backlog 5 件（跟 Mac 2.10.36 同源） ----
+    /// P2-2: 双修饰键 hotkey —— 300ms 内连按两次同 modifier 触发 toggle。
+    /// 取值: "" (off, 默认) | "shift" | "cmd" | "opt" | "ctrl"。Win 上 "cmd" 即 Win 键。
+    /// 默认 OFF —— 误触风险（连续打字）高，要用户主动开。
+    #[serde(default = "default_double_modifier_key")]
+    pub double_modifier_key: String,
+    /// P2-1: 鼠标侧键 hotkey —— 0=off (默认), 1=XBUTTON1 (back), 2=XBUTTON2 (forward)。
+    /// 跟主键盘 hotkey 并行，不替换。需要鼠标有侧键。默认 OFF。
+    #[serde(default = "default_mouse_side_button")]
+    pub mouse_side_button: u32,
+    /// P1-2: 词汇检测+建议加词典开关。默认 OFF —— 中文分词噪音大，主动开后才
+    /// spawn hotword_candidate 后台扫陌生词。
+    #[serde(default = "no")]
+    pub hotword_suggestion_enabled: bool,
+    /// 翻译快捷键开关（默认 ON，跟 Mac 对齐）。Ctrl+Alt+T 选中文本一键翻译。
+    #[serde(default = "yes")]
+    pub translate_hotkey_enabled: bool,
+    /// 翻译目标语言（自然语言标签，喂进 prompt verbatim）。默认 "English"。
+    #[serde(default = "default_translation_target")]
+    pub translation_target: String,
+    /// 「随便问」浮窗 hotkey 开关（默认 ON，跟 Mac 对齐）。Ctrl+Alt+/ 弹起。
+    #[serde(default = "yes")]
+    pub assistant_hotkey_enabled: bool,
+    /// (v0.8.4 typeless 学习 P1 #4) 输出语言覆盖。
+    /// 空 = 跟随用户实际说话语言（默认）；非空（"English" / "日本語" /
+    /// "中文" / "粤语" 等）→ polish 阶段把最终结果翻成指定语言。
+    /// 「Speak Chinese, get English」类需求一次设置长期生效。
+    #[serde(default = "default_output_language_override")]
+    pub output_language_override: String,
 }
 
 fn default_engine() -> String { "tititalk_cloud".into() }
@@ -119,6 +148,10 @@ fn default_hybrid_threshold_ms() -> u32 { 250 }
 fn default_sound_volume() -> f32 { 0.4 }
 fn default_history_retention_days() -> u32 { 30 }
 fn default_polish_intensity() -> String { "normal".into() }
+fn default_double_modifier_key() -> String { String::new() }
+fn default_mouse_side_button() -> u32 { 0 }
+fn default_translation_target() -> String { "English".into() }
+fn default_output_language_override() -> String { String::new() }
 fn yes() -> bool { true }
 fn no() -> bool { false }
 
@@ -148,6 +181,13 @@ impl Default for AppConfig {
             esc_cancel: true,
             mute_system_during_recording: false,
             polish_intensity: default_polish_intensity(),
+            double_modifier_key: default_double_modifier_key(),
+            mouse_side_button: default_mouse_side_button(),
+            hotword_suggestion_enabled: false,
+            translate_hotkey_enabled: true,
+            translation_target: default_translation_target(),
+            assistant_hotkey_enabled: true,
+            output_language_override: default_output_language_override(),
         }
     }
 }

@@ -30,6 +30,23 @@ export interface AppConfig {
   mute_system_during_recording: boolean;
   /// P1-3 润色强度："light" / "normal" / "heavy"。默认 "normal"。
   polish_intensity: PolishIntensity;
+  // (v0.8.4 backlog 5 件) — 跟 Mac 2.10.36 同源
+  /// P2-2 双修饰键 hotkey："" (off, 默认) | "shift" | "cmd" | "opt" | "ctrl"
+  double_modifier_key: string;
+  /// P2-1 鼠标侧键 hotkey：0=off (默认), 1=XBUTTON1 back, 2=XBUTTON2 forward
+  mouse_side_button: number;
+  /// P1-2 词汇检测+建议加词典开关。默认 OFF
+  hotword_suggestion_enabled: boolean;
+  /// 翻译快捷键开关（默认 ON）
+  translate_hotkey_enabled: boolean;
+  /// 翻译目标语言（自然语言标签）
+  translation_target: string;
+  /// 「随便问」浮窗 hotkey 开关（默认 ON）
+  assistant_hotkey_enabled: boolean;
+  /// (v0.8.4 typeless 学习 P1 #4) 输出语言覆盖。空 = 跟随用户实际说
+  /// 话语言；非空（"English" / "日本語" / "中文" 等）→ polish 阶段把
+  /// 最终结果翻成指定语言。
+  output_language_override: string;
 }
 
 export type PolishIntensity = "light" | "normal" | "heavy";

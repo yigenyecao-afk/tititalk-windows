@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { testAsr, VK_CHOICES } from "../lib/api";
+import {
+  testAsr,
+  VK_CHOICES,
+  getHotwordCandidates,
+  dismissHotwordCandidate,
+  clearAllHotwordCandidates,
+} from "../lib/api";
 import type { AppConfig } from "../lib/types";
 import TypelessSheet from "./TypelessSheet";
 import {
@@ -93,23 +99,9 @@ export default function SettingsSheet({
                 </select>
               }
             />
-            <TypelessRow
-              icon="🌐"
-              iconColor="#0EA5E9"
-              title="语言"
-              subtitle="自动模式适合中英混说"
-              trailing={
-                <select
-                  className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
-                  value={draft.language}
-                  onChange={(e) => patch("language", e.target.value)}
-                >
-                  <option value="zh">中文</option>
-                  <option value="en">英文</option>
-                  <option value="auto">自动</option>
-                </select>
-              }
-            />
+            {/* (v0.8.5 第三轮 Cut#6) 「语言」picker 挪到高级 disclosure ——
+                默认 auto 即最优；改成单语反而漏识别。@field draft.language
+                留生效，下方高级里仍可调。 */}
           </TypelessCard>
           {!proUnlocked && (
             <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
@@ -173,6 +165,95 @@ export default function SettingsSheet({
                 </select>
               }
             />
+            {/* (v0.8.4 P2-2) 双修饰键 hotkey —— 默认关 */}
+            <TypelessRow
+              icon="⌥"
+              iconColor="#6366F1"
+              title="双击修饰键触发"
+              subtitle={
+                draft.double_modifier_key === ""
+                  ? "300ms 内连按两次同一个修饰键开始/停止录音"
+                  : `已开 · 双击 ${doubleModifierLabel(draft.double_modifier_key)}`
+              }
+              trailing={
+                <select
+                  className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+                  value={draft.double_modifier_key}
+                  onChange={(e) => patch("double_modifier_key", e.target.value)}
+                >
+                  <option value="">关</option>
+                  <option value="shift">⇧⇧</option>
+                  <option value="ctrl">⌃⌃</option>
+                  <option value="opt">⌥⌥（Alt）</option>
+                  <option value="cmd">⊞⊞（Win 键）</option>
+                </select>
+              }
+            />
+            {/* (v0.8.4 P2-1) 鼠标侧键 hotkey —— 默认关 */}
+            <TypelessRow
+              icon="🖱"
+              iconColor="#0EA5E9"
+              title="鼠标侧键触发"
+              subtitle={
+                draft.mouse_side_button === 0
+                  ? "用鼠标左侧两个侧键开始/停止录音（需带侧键的鼠标）"
+                  : `已开 · ${mouseSideLabel(draft.mouse_side_button)}`
+              }
+              trailing={
+                <select
+                  className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+                  value={String(draft.mouse_side_button)}
+                  onChange={(e) => patch("mouse_side_button", Number(e.target.value))}
+                >
+                  <option value="0">关</option>
+                  <option value="1">侧键 1（后退）</option>
+                  <option value="2">侧键 2（前进）</option>
+                </select>
+              }
+            />
+            {/* (v0.8.4 backlog #4) Ctrl+Alt+T 翻译开关 + 目标语言 */}
+            <TypelessRow
+              icon="🌐"
+              iconColor="#10B981"
+              title="Ctrl+Alt+T 一键翻译选中"
+              subtitle="选中文字 → 按 Ctrl+Alt+T → 自动翻译并替换。需要在 BYOK 配 DashScope API key"
+              trailing={
+                <Switch
+                  checked={draft.translate_hotkey_enabled}
+                  onChange={(v) => patch("translate_hotkey_enabled", v)}
+                />
+              }
+            />
+            {draft.translate_hotkey_enabled && (
+              <TypelessRow
+                icon="🗣"
+                iconColor="#10B981"
+                title="翻译目标语言"
+                subtitle="自然语言写法（English / 日本語 / Français / 粤语 等）"
+                trailing={
+                  <input
+                    type="text"
+                    className="border border-ink-300 rounded px-2 py-1.5 text-sm w-32"
+                    value={draft.translation_target}
+                    onChange={(e) => patch("translation_target", e.target.value)}
+                    placeholder="English"
+                  />
+                }
+              />
+            )}
+            {/* (v0.8.4 backlog #5) Ctrl+Alt+/ 「随便问」浮窗开关 */}
+            <TypelessRow
+              icon="🪄"
+              iconColor="#A855F7"
+              title="Ctrl+Alt+/ 「随便问」浮窗"
+              subtitle="按一下弹起浮窗，输入指令做翻译/润色/写邮件等。需要在 BYOK 配 DashScope API key"
+              trailing={
+                <Switch
+                  checked={draft.assistant_hotkey_enabled}
+                  onChange={(v) => patch("assistant_hotkey_enabled", v)}
+                />
+              }
+            />
           </TypelessCard>
         </section>
 
@@ -215,6 +296,30 @@ export default function SettingsSheet({
                   {/* FIX-20 (qa-2026-05-03): code persona 之前 Win 端漏暴露
                       （WIN-005），Mac 端有但 Win 这个 picker 缺。补齐 4/4。 */}
                   <option value="code">代码注释</option>
+                </select>
+              }
+            />
+            {/* (v0.8.4 typeless 学习 P1 #4) 输出语言覆盖 */}
+            <TypelessRow
+              icon="🌍"
+              iconColor="#0EA5E9"
+              title="输出语言"
+              subtitle="说一种语言、自动翻译成另一种语言后插入。空 = 跟随说话语言不翻译"
+              trailing={
+                <select
+                  className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+                  value={draft.output_language_override}
+                  onChange={(e) => patch("output_language_override", e.target.value)}
+                >
+                  <option value="">跟随实际</option>
+                  <option value="中文">→ 中文</option>
+                  <option value="English">→ English</option>
+                  <option value="日本語">→ 日本語</option>
+                  <option value="한국어">→ 한국어</option>
+                  <option value="粤语">→ 粤语</option>
+                  <option value="Français">→ Français</option>
+                  <option value="Deutsch">→ Deutsch</option>
+                  <option value="Español">→ Español</option>
                 </select>
               }
             />
@@ -292,52 +397,14 @@ export default function SettingsSheet({
                 />
               }
             />
-            <TypelessRow
-              icon="🌐"
-              iconColor="#10B981"
-              title="云端不可用时引导切 BYOK"
-              subtitle="网络飘 / WS 超时 → Notice 提示切到自带 key 的引擎"
-              trailing={
-                <Switch
-                  checked={draft.cloud_auto_fallback_to_local}
-                  onChange={(v) => patch("cloud_auto_fallback_to_local", v)}
-                />
-              }
-            />
+            {/* (v0.8.5 第三轮 Cut#7) 「云端不可用切 BYOK」toggle UI 移除 ——
+                默认开就该开（云端飘网络时引导切 BYOK 是体验，不是用户该
+                选项）。cloud_auto_fallback_to_local @field 留生效。 */}
           </TypelessCard>
         </section>
 
-        {/* (v0.8.3 P1-3) 润色强度 */}
-        {draft.stylist_enabled && (
-          <section>
-            <TypelessSectionHeader title="润色强度" subtitle="只清理标点 vs 大刀阔斧改写" />
-            <TypelessCard>
-              <TypelessRow
-                icon="🎚"
-                iconColor="#6366F1"
-                title="强度档位"
-                subtitle={
-                  draft.polish_intensity === "light" ? "轻 · 只补标点 / 删口头禅" :
-                  draft.polish_intensity === "heavy" ? "重 · 改写为正式书面语，可能偏离原意" :
-                  "标准 · 当前默认行为"
-                }
-                trailing={
-                  <select
-                    value={draft.polish_intensity ?? "normal"}
-                    onChange={(e) =>
-                      patch("polish_intensity", e.target.value as "light" | "normal" | "heavy")
-                    }
-                    className="bg-ink-900 border border-ink-700 rounded px-2 py-1 text-sm"
-                  >
-                    <option value="light">轻</option>
-                    <option value="normal">标准</option>
-                    <option value="heavy">重</option>
-                  </select>
-                }
-              />
-            </TypelessCard>
-          </section>
-        )}
+        {/* (v0.8.5 第三轮 Cut#8) 「润色强度」整 Section 挪到高级 disclosure ——
+            normal 是 90% 用户最优档，light/heavy 是边界探索。 */}
 
         {/* 提示音 */}
         <section>
@@ -395,6 +462,26 @@ export default function SettingsSheet({
 
           {advanced && (
             <div className="mt-3 space-y-4">
+              {/* (v0.8.5 第三轮 Cut#6) 语言 picker 挪入高级——日常 auto 即最优 */}
+              <TypelessCard>
+                <TypelessRow
+                  icon="🌐"
+                  title="ASR 语言"
+                  subtitle="默认 auto 适合中英混说；改单语在外文比例高时偶尔提升识别率"
+                  trailing={
+                    <select
+                      className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+                      value={draft.language}
+                      onChange={(e) => patch("language", e.target.value)}
+                    >
+                      <option value="auto">自动</option>
+                      <option value="zh">中文</option>
+                      <option value="en">英文</option>
+                    </select>
+                  }
+                />
+              </TypelessCard>
+
               {draft.engine !== "tititalk_cloud" && (
                 <TypelessCard>
                   <TypelessRow
@@ -444,6 +531,31 @@ export default function SettingsSheet({
                     />
                   }
                 />
+                {/* (v0.8.5 第三轮 Cut#8) 润色强度从主面挪进来——边界探索档 */}
+                {draft.stylist_enabled && (
+                  <TypelessRow
+                    icon="🎚"
+                    title="润色强度"
+                    subtitle={
+                      draft.polish_intensity === "light" ? "轻 · 只补标点 / 删口头禅" :
+                      draft.polish_intensity === "heavy" ? "重 · 改写为正式书面语，可能偏离原意" :
+                      "标准 · 当前默认行为"
+                    }
+                    trailing={
+                      <select
+                        value={draft.polish_intensity ?? "normal"}
+                        onChange={(e) =>
+                          patch("polish_intensity", e.target.value as "light" | "normal" | "heavy")
+                        }
+                        className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+                      >
+                        <option value="light">轻</option>
+                        <option value="normal">标准</option>
+                        <option value="heavy">重</option>
+                      </select>
+                    }
+                  />
+                )}
               </TypelessCard>
 
               <TypelessCard>
@@ -468,66 +580,38 @@ export default function SettingsSheet({
                     }
                   />
                 </div>
-              </TypelessCard>
-
-              <TypelessCard>
+                {/* (v0.8.4 P1-2) 词汇检测建议加词典 toggle + banner */}
                 <TypelessRow
-                  icon="🗑"
-                  title="自动清理历史"
-                  subtitle="超过保留天数的本地历史每次启动 + 每天会被清掉"
+                  icon="✨"
+                  iconColor="#F59E0B"
+                  title="建议加词典"
+                  subtitle="重复出现的英文术语攒满 3 次后，词典上方冒「+ 加进词典」"
                   trailing={
                     <Switch
-                      checked={draft.history_cleanup_enabled}
-                      onChange={(v) => patch("history_cleanup_enabled", v)}
+                      checked={draft.hotword_suggestion_enabled}
+                      onChange={(v) => patch("hotword_suggestion_enabled", v)}
                     />
                   }
                 />
-                <TypelessRow
-                  icon="📅"
-                  title="保留天数"
-                  trailing={
-                    <input
-                      type="number"
-                      className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white w-24 disabled:opacity-50"
-                      value={draft.history_retention_days}
-                      min={1}
-                      max={3650}
-                      disabled={!draft.history_cleanup_enabled}
-                      onChange={(e) =>
-                        patch(
-                          "history_retention_days",
-                          parseInt(e.target.value, 10) || 30,
-                        )
+                {draft.hotword_suggestion_enabled && (
+                  <HotwordCandidateBanner
+                    onAdd={(token) => {
+                      const next = [...draft.dictionary];
+                      if (!next.some((w) => w.toLowerCase() === token.toLowerCase())) {
+                        next.push(token);
+                        patch("dictionary", next);
                       }
-                    />
-                  }
-                />
+                    }}
+                  />
+                )}
               </TypelessCard>
 
-              {draft.hotkey_mode === "push_to_talk" && (
-                <TypelessCard>
-                  <TypelessRow
-                    icon="⏱"
-                    title="最小按住时长（ms）"
-                    subtitle="短于此值视为误触不录"
-                    trailing={
-                      <input
-                        type="number"
-                        className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white w-24"
-                        value={draft.min_hold_ms}
-                        min={50}
-                        max={1000}
-                        onChange={(e) =>
-                          patch(
-                            "min_hold_ms",
-                            parseInt(e.target.value, 10) || 150,
-                          )
-                        }
-                      />
-                    }
-                  />
-                </TypelessCard>
-              )}
+              {/* (v0.8.5 第三轮 Cut#9) 「自动清理历史」toggle + 「保留天数」
+                  number UI 移除 —— 30 天默认 + 启动自动跑 cleanup_history.rs 已足；
+                  history_cleanup_enabled / history_retention_days @field 留生效。
+                  (v0.8.5 第三轮 Cut#10) 「最小按住时长 (ms)」row UI 移除 ——
+                  150ms 默认是基于 typeless 测试出来的最佳值，调它=把热键玩坏；
+                  min_hold_ms @field 留生效。 */}
             </div>
           )}
         </section>
@@ -575,6 +659,24 @@ function hotkeyModeHint(mode: AppConfig["hotkey_mode"]): string {
   }
 }
 
+function doubleModifierLabel(key: string): string {
+  switch (key) {
+    case "shift": return "⇧";
+    case "ctrl":  return "⌃";
+    case "opt":   return "⌥（Alt）";
+    case "cmd":   return "⊞（Win 键）";
+    default:      return "";
+  }
+}
+
+function mouseSideLabel(n: number): string {
+  switch (n) {
+    case 1: return "侧键 1（后退）";
+    case 2: return "侧键 2（前进）";
+    default: return "";
+  }
+}
+
 /// 自定义 Switch（rangify 浏览器原生 checkbox 看着像移动端开关）。
 function Switch({
   checked,
@@ -602,5 +704,72 @@ function Switch({
         }
       />
     </button>
+  );
+}
+
+/// (v0.8.4 P1-2) 词汇候选 banner —— 拉服务端 candidates，给「+ 加进词典」跟
+/// 「忽略」两个动作。Sheet 打开时拉一次；用户点动作后本地乐观更新。
+function HotwordCandidateBanner({
+  onAdd,
+}: {
+  onAdd: (token: string) => void;
+}) {
+  const [items, setItems] = useState<[string, number][]>([]);
+  useEffect(() => {
+    getHotwordCandidates()
+      .then(setItems)
+      .catch(() => setItems([]));
+  }, []);
+  if (items.length === 0) return null;
+  return (
+    <div className="mx-4 mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-amber-900">
+          ✨ 发现 {items.length} 个反复出现的新词
+        </span>
+        <button
+          className="text-xs text-amber-800 hover:underline"
+          onClick={() => {
+            clearAllHotwordCandidates().then(() => setItems([]));
+          }}
+        >
+          全部清掉
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {items.slice(0, 20).map(([token, n]) => (
+          <span
+            key={token}
+            className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs"
+            title={`出现 ${n} 次`}
+          >
+            <span className="font-mono">{token}</span>
+            <button
+              className="text-emerald-600 hover:text-emerald-800"
+              onClick={() => {
+                onAdd(token);
+                dismissHotwordCandidate(token).then(() => {
+                  setItems((prev) => prev.filter(([t]) => t !== token));
+                });
+              }}
+              title="加进词典"
+            >
+              ＋
+            </button>
+            <button
+              className="text-ink-500 hover:text-ink-800"
+              onClick={() => {
+                dismissHotwordCandidate(token).then(() => {
+                  setItems((prev) => prev.filter(([t]) => t !== token));
+                });
+              }}
+              title="忽略这个词"
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }

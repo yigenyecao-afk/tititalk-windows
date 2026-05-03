@@ -328,6 +328,16 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     // 路径仍可能漏），verbatim 模式更必需。
     let text = crate::text_post_process::normalize(&text, cfg.cjk_auto_space);
 
+    // (v0.8.4 P1-2) 词汇检测 —— 后台扫陌生英文 token 计数（不阻塞 insert）。
+    // 总开关 OFF 直接 no-op；ON 走 hotword_candidate::observe 累计 + 落 disk。
+    if cfg.hotword_suggestion_enabled {
+        let snap = text.clone();
+        let dict = cfg.dictionary.clone();
+        std::thread::spawn(move || {
+            crate::hotword_candidate::observe(&snap, &dict, true);
+        });
+    }
+
     state.emit(PipelineEvent::Transcript { text: text.clone() });
 
     if cfg.auto_insert {

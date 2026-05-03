@@ -291,6 +291,7 @@ impl Account {
         model: &str,
         intensity: &str,
         cjk_auto_space: bool,
+        output_language: &str,
     ) -> Result<CloudPolishResponse, ApiError> {
         #[derive(serde::Serialize)]
         struct Req<'a> {
@@ -300,8 +301,10 @@ impl Account {
             // (v0.8.3 P1-3 / P0-2) 跟 Mac 同源透传给后端 polish service
             intensity: &'a str,
             cjk_auto_space: bool,
+            // (v0.8.4 typeless 学习 P1 #4) 输出语言覆盖；空 = 跟随
+            output_language: &'a str,
         }
-        let req = Req { text, persona, model, intensity, cjk_auto_space };
+        let req = Req { text, persona, model, intensity, cjk_auto_space, output_language };
         // (v0.7.4 polish-fix) 30→35s。后端 polish service DEFAULT_TIMEOUT_SEC=25
         // 加 polish.py route 处理 + 网络往返，client 给 35s 让服务端的 25s 一定
         // 先到。原 30s 跟服务端 25s+往返几乎平，偶尔被 client 抢先 timeout。
@@ -343,6 +346,167 @@ impl Account {
         }
         self.emit_state();
         Ok(resp)
+    }
+
+    /// (v0.8.6 #1 streaming polish) /api/polish/stream — SSE 流式润色，按
+    /// LLM token 边到边走 `on_delta` 回调。`on_final` 在收到 final 事件时
+    /// 调一次（含 quota 三元组）。失败抛字符串错（caller 走 fallback）。
+    ///
+    /// 用 reqwest::Client 自己组请求（ApiClient 只跑 JSON 路径，SSE 要 raw byte
+    /// stream + 手解 frame）。401 不自动 refresh —— 调一次失败让 caller 回落到
+    /// 一次性 cloud_polish（自带 401 refresh 重试）就够了。
+    pub async fn cloud_polish_stream<F, G>(
+        &self,
+        text: &str,
+        persona: &str,
+        model: &str,
+        intensity: &str,
+        cjk_auto_space: bool,
+        output_language: &str,
+        mut on_delta: F,
+        mut on_final: G,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&str),
+        G: FnMut(CloudPolishResponse),
+    {
+        use futures_util::StreamExt;
+
+        let token = self
+            .inner
+            .read()
+            .access_token
+            .clone()
+            .ok_or_else(|| "未登录 TiTiTalk".to_string())?;
+
+        #[derive(serde::Serialize)]
+        struct Req<'a> {
+            text: &'a str,
+            persona: &'a str,
+            model: &'a str,
+            intensity: &'a str,
+            cjk_auto_space: bool,
+            output_language: &'a str,
+        }
+        let body = Req { text, persona, model, intensity, cjk_auto_space, output_language };
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(35))
+            .connect_timeout(Duration::from_secs(8))
+            .build()
+            .map_err(|e| format!("build reqwest client: {e}"))?;
+
+        let url = format!("{}/api/polish/stream", api_client::BASE_URL);
+        let resp = client
+            .post(&url)
+            .bearer_auth(&token)
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream")
+            .header("User-Agent", format!("TiTiTalk-win/{}", env!("CARGO_PKG_VERSION")))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("polish stream 请求失败：{e}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body_str = resp.text().await.unwrap_or_default();
+            return Err(format!(
+                "polish stream {} - {}",
+                status.as_u16(),
+                body_str.chars().take(200).collect::<String>()
+            ));
+        }
+
+        // SSE 解析：byte stream → 行式 frame
+        let mut stream = resp.bytes_stream();
+        let mut buf = String::new();
+        let mut current_event = String::from("message");
+        let mut data_buf = String::new();
+        let mut saw_final = false;
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| format!("polish stream 读失败：{e}"))?;
+            let s = std::str::from_utf8(&bytes).map_err(|e| format!("polish stream 编码错：{e}"))?;
+            buf.push_str(s);
+            // 按 \n\n 切 frame，剩余留 buf
+            while let Some(pos) = buf.find("\n\n") {
+                let frame: String = buf.drain(..pos + 2).collect();
+                let frame_body: &str = frame.trim_end_matches('\n');
+                current_event = "message".into();
+                data_buf.clear();
+                for line in frame_body.lines() {
+                    if let Some(ev) = line.strip_prefix("event:") {
+                        current_event = ev.trim().to_string();
+                    } else if let Some(d) = line.strip_prefix("data:") {
+                        if data_buf.is_empty() {
+                            data_buf = d.trim().to_string();
+                        } else {
+                            data_buf.push('\n');
+                            data_buf.push_str(d.trim());
+                        }
+                    }
+                }
+                if data_buf.is_empty() { continue; }
+
+                match current_event.as_str() {
+                    "delta" => {
+                        #[derive(serde::Deserialize)]
+                        struct Delta { text: String }
+                        if let Ok(d) = serde_json::from_str::<Delta>(&data_buf) {
+                            if !d.text.is_empty() { on_delta(&d.text); }
+                        }
+                    }
+                    "final" => {
+                        match serde_json::from_str::<CloudPolishResponse>(&data_buf) {
+                            Ok(resp) => {
+                                saw_final = true;
+                                // 顺手灌 quota，跟同步路径同款
+                                let prev = self.inner.read().quota.clone();
+                                let date = prev
+                                    .as_ref()
+                                    .map(|q| q.date.clone())
+                                    .unwrap_or_else(|| {
+                                        let utc8 = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+                                        chrono::Utc::now().with_timezone(&utc8).format("%Y-%m-%d").to_string()
+                                    });
+                                let plan = prev.as_ref().and_then(|q| q.plan.clone());
+                                let q = QuotaInfo {
+                                    date,
+                                    plan,
+                                    limit_tokens: Some(resp.limit_tokens),
+                                    used_tokens: Some(resp.used_tokens),
+                                    remaining_tokens: Some(resp.remaining_tokens),
+                                    limit_cents: prev.as_ref().and_then(|q| q.limit_cents),
+                                    used_cents: prev.as_ref().map(|q| q.used_cents).unwrap_or(0),
+                                    remaining_cents: prev.as_ref().and_then(|q| q.remaining_cents),
+                                    call_count: prev.as_ref().and_then(|q| q.call_count),
+                                    reset_at: prev.as_ref().map(|q| q.reset_at.clone()).unwrap_or_default(),
+                                };
+                                self.inner.write().quota = Some(q);
+                                self.emit_state();
+                                on_final(resp);
+                            }
+                            Err(e) => {
+                                log::warn!("polish stream final parse error: {e} body={}", data_buf);
+                            }
+                        }
+                    }
+                    "error" => {
+                        #[derive(serde::Deserialize)]
+                        struct ErrMsg { error: Option<String>, message: Option<String> }
+                        let msg: ErrMsg = serde_json::from_str(&data_buf).unwrap_or(ErrMsg { error: None, message: None });
+                        return Err(msg.message.unwrap_or_else(|| "云端流式润色失败".into()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if !saw_final {
+            return Err("polish stream 结束但未见 final 事件".into());
+        }
+        Ok(())
     }
 
     /// Force a refresh-token swap right now. Used by `asr::tititalk_cloud_transcribe`

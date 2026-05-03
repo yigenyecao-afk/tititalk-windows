@@ -1,16 +1,20 @@
 mod account;
 mod asr;
 mod asr_stream;
+mod assistant;
 mod audio;
 mod config;
 mod history;
 mod hotkey;
+mod hotword_candidate;
 mod insertion;
+mod mouse_hotkey;
 mod pill;
 mod state;
 mod stylist;
 mod system_audio_muter;
 mod text_post_process;
+mod translate;
 mod tray;
 
 use std::io::Write;
@@ -140,9 +144,19 @@ pub fn run() {
             cmd_history_clear,
             cmd_open_mic_settings,
             cmd_check_microphone,
+            cmd_hotword_candidates,
+            cmd_hotword_dismiss,
+            cmd_hotword_clear_all,
+            cmd_assistant_run_action,
+            cmd_assistant_insert_to_app,
+            cmd_assistant_hide,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            // (v0.8.4 backlog #5) 让 AppState 持有 AppHandle，给 hotkey 触发的
+            // assistant::trigger 读 webview window 用。
+            *app_state.app_handle.write() = Some(handle.clone());
 
             // Tray + menu
             tray::install_tray(&handle).expect("install tray");
@@ -188,6 +202,8 @@ pub fn run() {
 
             // Hotkey listener (low-level keyboard hook on Windows)
             hotkey::spawn_hook_thread(app_state.clone());
+            // (v0.8.4 P2-1) 鼠标侧键 hotkey —— 单独 LL mouse hook 线程
+            mouse_hotkey::spawn_mouse_hook_thread(app_state.clone());
 
             // Account integration — build, attach, kick bootstrap.
             let account = account::Account::new(handle.clone(), app_state.clone());
@@ -556,4 +572,66 @@ fn cmd_open_mic_settings() -> Result<(), String> {
 #[tauri::command]
 fn cmd_check_microphone() -> Result<(), String> {
     audio::preflight_microphone()
+}
+
+// (v0.8.4 backlog #5) 「随便问」浮窗 ——
+//   run_action: action ∈ translate / polish / email / qa
+#[tauri::command]
+async fn cmd_assistant_run_action(
+    state: tauri::State<'_, Arc<AppState>>,
+    action: String,
+    user_input: String,
+    selection: String,
+) -> Result<String, String> {
+    // 拿 Arc clone 给 async 用；State<Arc<T>> 解引用是 &Arc<T>，clone 拿 Arc<T>。
+    let st: Arc<AppState> = (*state).clone();
+    assistant::run_action(st, action, user_input, selection)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 把 LLM 答案插回原 app —— 模拟 Ctrl+V（前端 setClipboard 然后调这个）
+#[tauri::command]
+fn cmd_assistant_insert_to_app(text: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        crate::translate::write_clipboard_text_pub(&text).map_err(|e| e.to_string())?;
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        crate::translate::simulate_ctrl_v_pub().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = text;
+        Err("仅 Windows 支持".into())
+    }
+}
+
+#[tauri::command]
+fn cmd_assistant_hide(handle: tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(win) = handle.get_webview_window("assistant") {
+        let _ = win.hide();
+    }
+}
+
+// (v0.8.4 P1-2) 词汇候选 —— 前端 DictionaryTab banner 用
+#[tauri::command]
+fn cmd_hotword_candidates(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Vec<(String, u32)> {
+    let cfg = state.config.read();
+    let dict = cfg.dictionary.clone();
+    drop(cfg);
+    hotword_candidate::ready_candidates(&dict)
+}
+
+#[tauri::command]
+fn cmd_hotword_dismiss(token: String) {
+    hotword_candidate::dismiss(&token);
+}
+
+#[tauri::command]
+fn cmd_hotword_clear_all() {
+    hotword_candidate::clear_all();
 }

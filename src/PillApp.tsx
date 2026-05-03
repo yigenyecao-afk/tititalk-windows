@@ -1,6 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { onPipeline } from "./lib/api";
+import { onPipeline, getConfig } from "./lib/api";
 import type { PipelinePhase } from "./lib/types";
+
+/// (v0.8.4 typeless 学习 P1 #5) PTT「松开即停」短引导。新 PTT 用户每次
+/// pill 出现就 +1 计数（localStorage），≥5 次后停止显示，不打扰熟练用户。
+function shouldShowPttHint(mode: string): boolean {
+  if (mode !== "push_to_talk" && mode !== "hybrid") return false;
+  const n = parseInt(localStorage.getItem("pttHintShownCount") || "0", 10);
+  return n < 5;
+}
+function bumpPttHintShown() {
+  const n = parseInt(localStorage.getItem("pttHintShownCount") || "0", 10);
+  localStorage.setItem("pttHintShownCount", String(n + 1));
+}
 
 /// Pill UI — 跟 Mac 4 主题统一的丝滑流：
 ///   • 第一次拿到文字直接显示（不做起手 typewriter）
@@ -16,6 +28,13 @@ export default function PillApp() {
   // recording 阶段时如果 true，pill 文案换成「录音中… 连接云端」让用户知道
   // 是网络等待 (实测 2-3s)，不是 pill 没工作。
   const [cloudConnecting, setCloudConnecting] = useState(false);
+  // (P1 #5) PTT 引导：拉一次 hotkey_mode 决定要不要显示「松开即停」
+  const [hotkeyMode, setHotkeyMode] = useState<string>("hybrid");
+  useEffect(() => {
+    getConfig()
+      .then((c) => setHotkeyMode(c.hotkey_mode))
+      .catch(() => {});
+  }, []);
   const targetRef = useRef<string>("");
   const displayedRef = useRef<string>("");
   const rafRef = useRef<number | null>(null);
@@ -100,8 +119,22 @@ export default function PillApp() {
   const bars = barLevels(rms);
   const showText = displayed || (target ? "" : label);
 
+  // (P1 #5) PTT 引导显示条件：录音中 + push_to_talk/hybrid + 没攒满 5 次
+  const showPttHint = phase === "recording" && shouldShowPttHint(hotkeyMode);
+  useEffect(() => {
+    if (showPttHint) bumpPttHintShown();
+  }, [showPttHint]);
+
   return (
-    <div className="h-screen w-screen flex items-center justify-center select-none">
+    <div className="h-screen w-screen flex flex-col items-center justify-center select-none">
+      {showPttHint && (
+        <div
+          className="mb-1 px-2 py-0.5 text-[9px] font-medium rounded-full text-white/70"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+        >
+          松开即停 →
+        </div>
+      )}
       <div
         className="flex items-center gap-3 rounded-full px-4 py-2 shadow-2xl backdrop-blur-md"
         style={{
