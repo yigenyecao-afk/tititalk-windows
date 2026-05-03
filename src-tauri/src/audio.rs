@@ -263,8 +263,11 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
                     "polish returned empty: engine={} elapsed={:.2}s — falling back to raw",
                     cfg.engine, polish_t0.elapsed().as_secs_f32()
                 );
+                // FIX-21 (qa-2026-05-03): 跟 Mac 措辞对齐——「已用原文」是
+                // Mac 端 stylist 失败时的 pill 文案，Win 端原本写「已落原始
+                // 转写」表达不一致（WIN-004）。
                 state.emit(PipelineEvent::Error {
-                    message: "⚠️ 润色返回空，已落原始转写".into(),
+                    message: "已用原文｜云端润色返回空".into(),
                 });
                 raw.clone()
             }
@@ -273,10 +276,9 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
                     "polish failed: engine={} elapsed={:.2}s err={e} — falling back to raw",
                     cfg.engine, polish_t0.elapsed().as_secs_f32()
                 );
-                // (v0.7.4 polish-fix) 旧版本只 log 不通知 UI，用户体感「润色失效
-                // 但没原因」。改 emit Error 让前端 lastError banner 接住具体原因。
+                // FIX-21: 失败文案改「已用原文｜润色失败：xxx」跟 Mac 一致。
                 state.emit(PipelineEvent::Error {
-                    message: format!("⚠️ 润色失败，已落原始转写：{e}"),
+                    message: format!("已用原文｜润色失败：{e}"),
                 });
                 raw.clone()
             }

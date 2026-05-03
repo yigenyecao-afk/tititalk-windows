@@ -154,6 +154,30 @@ pub fn run() {
             // app has booted. Without this the user sees nothing after install
             // and has to find the tray icon.
             if let Some(main) = app.get_webview_window("main") {
+                // FIX-19 (qa-2026-05-03): 主窗口冷启动前 sanity-check 位置——
+                // 用户拔掉外接屏后 saved position 可能在虚拟桌面外，老路径只
+                // 有点托盘时才修。现在冷启动也兜底（WIN-003）。
+                if let (Ok(pos), Ok(size), Ok(monitors)) =
+                    (main.outer_position(), main.outer_size(), main.available_monitors())
+                {
+                    let on_screen = monitors.iter().any(|m| {
+                        let mp = m.position();
+                        let ms = m.size();
+                        let cx = pos.x + (size.width as i32) / 2;
+                        let cy = pos.y + (size.height as i32) / 2;
+                        cx >= mp.x
+                            && cx <= mp.x + ms.width as i32
+                            && cy >= mp.y
+                            && cy <= mp.y + ms.height as i32
+                    });
+                    if !on_screen {
+                        log::warn!(
+                            "main window saved at ({}, {}) outside any current monitor — re-centering",
+                            pos.x, pos.y
+                        );
+                        let _ = main.center();
+                    }
+                }
                 let _ = main.show();
                 let _ = main.set_focus();
             }

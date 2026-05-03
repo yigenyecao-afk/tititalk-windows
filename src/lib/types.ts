@@ -21,7 +21,8 @@ export interface AppConfig {
   history_cleanup_enabled: boolean;
 }
 
-export type StylistPersona = "friendly" | "formal" | "mixed_zh_en";
+// FIX-20 (qa-2026-05-03): code persona 加入联合类型，跟 Mac 端对齐
+export type StylistPersona = "friendly" | "formal" | "mixed_zh_en" | "code";
 
 /// 对齐 mac AppDefaults.hotkeyMode：
 /// - push_to_talk: 按住录，松手停（默认；mac 上对应 Right Option 持按）

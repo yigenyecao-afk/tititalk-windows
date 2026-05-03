@@ -38,6 +38,10 @@ export default function ConflictDialog() {
     try {
       await resolveConflict(action);
       setPayload(null);
+      // FIX-23 (qa-2026-05-03): 解决冲突后广播刷新——SettingsSheet / 各
+      // useConfig hook 监听这个事件后重新拉一遍 cmd_get_config，立马显示
+      // 新值，不需用户手动关再开 (WIN-006)。
+      window.dispatchEvent(new CustomEvent("titi:config-changed"));
     } catch (e) {
       console.error("resolveConflict:", e);
     } finally {

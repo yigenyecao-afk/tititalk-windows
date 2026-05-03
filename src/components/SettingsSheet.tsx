@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { testAsr, VK_CHOICES } from "../lib/api";
 import type { AppConfig } from "../lib/types";
 import TypelessSheet from "./TypelessSheet";
@@ -29,6 +29,21 @@ export default function SettingsSheet({
   const [saving, setSaving] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [testResult, setTestResult] = useState("");
+
+  // FIX-23 (qa-2026-05-03): 监听 ConflictDialog 解决冲突后广播的事件，把
+  // 新 cfg patch 进来覆盖 draft——保证 sheet 在打开状态下也能即时刷新
+  // (WIN-006)。父组件传进来的 cfg 也跟着变，所以 useEffect 依赖 cfg 即可。
+  useEffect(() => {
+    setDraft(cfg);
+  }, [cfg]);
+  useEffect(() => {
+    const handler = () => {
+      // 让父组件重新拉 → 通过 cfg prop 流回来。
+      window.dispatchEvent(new CustomEvent("titi:request-config-reload"));
+    };
+    window.addEventListener("titi:config-changed", handler);
+    return () => window.removeEventListener("titi:config-changed", handler);
+  }, []);
 
   function patch<K extends keyof AppConfig>(k: K, v: AppConfig[K]) {
     if (k === "engine" && (v === "qwen" || v === "openai") && !proUnlocked) {
@@ -197,6 +212,9 @@ export default function SettingsSheet({
                   <option value="friendly">友好口语</option>
                   <option value="formal">正式书面</option>
                   <option value="mixed_zh_en">中英混排</option>
+                  {/* FIX-20 (qa-2026-05-03): code persona 之前 Win 端漏暴露
+                      （WIN-005），Mac 端有但 Win 这个 picker 缺。补齐 4/4。 */}
+                  <option value="code">代码注释</option>
                 </select>
               }
             />

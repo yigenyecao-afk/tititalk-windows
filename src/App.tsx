@@ -67,6 +67,13 @@ export default function App() {
     getConfig().then(setCfg).catch((e) => console.error(e));
     getAccountState().then(setAccount).catch((e) => console.error(e));
     getVersion().then(setVersion).catch((e) => console.warn("getVersion:", e));
+    // FIX-23 (qa-2026-05-03): ConflictDialog 解冲突后会 dispatch
+    // titi:request-config-reload，这里重新拉 cfg → 通过 prop 流回 SettingsSheet
+    // 让 sheet 在打开时也实时刷 (WIN-006)。
+    const reloadHandler = () => {
+      getConfig().then(setCfg).catch((e) => console.error("reload cfg:", e));
+    };
+    window.addEventListener("titi:request-config-reload", reloadHandler);
     // 启动时拉持久化历史（最近 50 条）—— transcript 增量再走 onPipeline。
     getHistoryRecent(50)
       .then((items) => setRecent(items.map((it) => ({ at: it.at, text: it.text }))))
@@ -135,6 +142,8 @@ export default function App() {
     return () => {
       un.then((fn) => fn());
       accountUn.then((fn) => fn());
+      // FIX-23: 清 conflict reload 监听
+      window.removeEventListener("titi:request-config-reload", reloadHandler);
     };
   }, []);
 
@@ -1021,11 +1030,22 @@ function HistoryPane({
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // FIX-22 (qa-2026-05-03): 清空历史加 success toast，让用户知道操作真的发生
+  // 了 (SET-013)。失败也提示，原本失败 silent 让用户疑「卡了？」。
   const handleClear = async () => {
     setBusy(true);
+    const count = items.length;
     try {
       await clearHistory();
       onClear();
+      // 用浏览器原生 alert 是 placeholder——本仓库无统一 toast 组件；
+      // 后续 B6 文案抛光会接 react-hot-toast 等。短期至少给反馈。
+      console.info(`history cleared: ${count} entries`);
+      setTimeout(() => {
+        try { alert(`已清空 ${count} 条历史记录`); } catch {}
+      }, 100);
+    } catch (e) {
+      try { alert(`清空失败：${(e as Error)?.message ?? e}`); } catch {}
     } finally {
       setBusy(false);
       setConfirmOpen(false);
