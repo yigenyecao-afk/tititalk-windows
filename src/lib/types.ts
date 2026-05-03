@@ -52,4 +52,10 @@ export type PipelineEvent =
   | { kind: "notice"; message: string }
   // 后端要求前端播提示音；frontend 按 cfg.sound_feedback_enabled/volume 决定
   // 是否真播。kind: "start" / "stop"。两种是不同短 WAV，听感上能区分。
-  | { kind: "sound"; sound: "start" | "stop" };
+  | { kind: "sound"; sound: "start" | "stop" }
+  // (ISSUE-2 2026-05-03) tititalk_cloud cold-connect 阶段标识 —— recorder
+  // 已起、PCM 进 buffer，但 WS 还在握手等 ready。recording 阶段时如果
+  // connecting=true，pill 文案换成「录音中… 连接云端」让用户知道是网络等待
+  // (实测 2-3s)。ready 抵达后 connecting=false。Mac AppState.isCloudConnecting
+  // 同源。
+  | { kind: "cloud_connecting"; connecting: boolean };

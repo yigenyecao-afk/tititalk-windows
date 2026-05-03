@@ -71,7 +71,16 @@ async fn prepare_and_run(
     pcm_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     stop_rx: oneshot::Receiver<()>,
 ) -> anyhow::Result<String> {
-    let session = start_session(state, sample_rate).await?;
+    let event_tx_clear = state.event_tx.clone();
+    let session = match start_session(state, sample_rate).await {
+        Ok(s) => s,
+        Err(e) => {
+            // (ISSUE-2 2026-05-03) prepare 失败也要清 cloud-connect 标识，
+            // 否则 pill 永远停在「录音中… 连接云端」。
+            let _ = event_tx_clear.send(PipelineEvent::CloudConnecting { connecting: false });
+            return Err(e);
+        }
+    };
     session.run(pcm_rx, stop_rx).await
 }
 
@@ -162,6 +171,9 @@ async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Result
     // caller。caller 在 prepare 期间已经把 capture 起来，PCM buffer 在 pcm_rx
     // unbounded channel 里，session.run() 主循环 first iteration 立刻 drain。
     let event_tx = state.event_tx.clone();
+    // (ISSUE-2 2026-05-03) ready 到了 → 通知前端 cold-connect 阶段结束，pill
+    // 文案从「录音中… 连接云端」恢复成「录音中…」。
+    let _ = event_tx.send(PipelineEvent::CloudConnecting { connecting: false });
     Ok(StreamSession { ws_sink, ws_stream, event_tx })
 }
 

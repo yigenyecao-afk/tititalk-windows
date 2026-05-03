@@ -41,6 +41,12 @@ pub enum PipelineEvent {
     /// `sound_feedback_enabled/volume` 调制；后端不判断开关，前端按 cfg 拦。
     /// （字段名不能叫 `kind` —— 跟 `#[serde(tag = "kind")]` 撞名。）
     Sound { sound: String },
+    /// (HOTFIX 2026-05-03 ISSUE-2) tititalk_cloud cold-connect 阶段标识 ——
+    /// recorder 已起、PCM 进 buffer，但 WS 还在握手等 ready（实测 2-3s）。
+    /// 前端 pill recording 状态时如果 connecting=true 则文案换成「录音中… 连接云端」
+    /// 让用户知道是网络等待，不是 pill 没工作。ready 抵达后 connecting=false。
+    /// 跟 Mac AppState.isCloudConnecting 同源。
+    CloudConnecting { connecting: bool },
 }
 
 /// Mutable global app state. Cheap to clone (`Arc`).

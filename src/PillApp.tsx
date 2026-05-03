@@ -11,6 +11,11 @@ export default function PillApp() {
   const [rms, setRms] = useState(0);
   const [target, setTarget] = useState<string>("");
   const [displayed, setDisplayed] = useState<string>("");
+  // (ISSUE-2 2026-05-03) tititalk_cloud cold-connect 标识 —— 后端在
+  // start_session_async 之前 emit connecting=true，ready 抵达后 emit false。
+  // recording 阶段时如果 true，pill 文案换成「录音中… 连接云端」让用户知道
+  // 是网络等待 (实测 2-3s)，不是 pill 没工作。
+  const [cloudConnecting, setCloudConnecting] = useState(false);
   const targetRef = useRef<string>("");
   const displayedRef = useRef<string>("");
   const rafRef = useRef<number | null>(null);
@@ -80,6 +85,8 @@ export default function PillApp() {
         displayedRef.current = next;
         setTarget(next);
         setDisplayed(next);
+      } else if (ev.kind === "cloud_connecting") {
+        setCloudConnecting(ev.connecting);
       }
     });
     return () => {
@@ -87,7 +94,9 @@ export default function PillApp() {
     };
   }, []);
 
-  const { color: phaseColor, label } = renderState(phase);
+  const { color: phaseColor, label: rawLabel } = renderState(phase);
+  // (ISSUE-2) cold-connect 期间换文案
+  const label = phase === "recording" && cloudConnecting ? "录音中… 连接云端" : rawLabel;
   const bars = barLevels(rms);
   const showText = displayed || (target ? "" : label);
 

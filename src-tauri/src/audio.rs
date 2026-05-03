@@ -106,6 +106,9 @@ pub async fn orchestrate_start(state: Arc<AppState>) {
     // 暴露 → orchestrate_stop 检测到 final_rx Err 后回退 batch。
     let cfg_engine = state.config.read().engine.clone();
     let stream_handle = if cfg_engine == "tititalk_cloud" {
+        // (ISSUE-2 2026-05-03) cold-connect 期间 pill 显示「连接云端」让用户
+        // 知道是网络等待。ready 抵达后 asr_stream 自己 emit connecting=false。
+        state.emit(PipelineEvent::CloudConnecting { connecting: true });
         let h = crate::asr_stream::start_session_async(state.clone(), TARGET_SR);
         *STREAMING_PCM_TX.lock() = Some(h.pcm_tx.clone());
         Some(h)

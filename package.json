@@ -1,6 +1,6 @@
 {
   "name": "tititalk-windows",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "TiTiTalk Windows — voice-to-text input, ports the macOS app to Win10/11.",
   "private": true,
   "type": "module",
