@@ -207,17 +207,18 @@ export default function PillApp() {
               opacity: phase === "recording" && rms > 0.05 ? 1 : 0.7,
             }}
           />
-          {/* 居中 + fade-mask 容器：内层 inline-block 让窄文本自动居中；
+          {/* 居中 + fade-mask 容器：内层 flex items-center 双轴居中防止
+              不同浏览器下 text 漂顶 / 漂底（Mac 同步 fix 加了显式垂直居中）。
               超长文本随 ASR 流入向右溢出，mask 两端柔淡出。 */}
           <div
-            className="flex-1 overflow-hidden"
+            className="flex-1 overflow-hidden flex items-center justify-center h-full"
             style={{
               maskImage: fadeMask,
               WebkitMaskImage: fadeMask,
             }}
           >
             <div
-              className="text-center font-medium whitespace-nowrap"
+              className="text-center font-medium whitespace-nowrap leading-none"
               style={{
                 color: "#f7f7f8",
                 fontSize: PILL_FONT_SIZE,
