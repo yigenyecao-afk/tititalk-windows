@@ -116,6 +116,34 @@ export interface PlansCatalog {
   current_user: CurrentUserOwnership | null;
 }
 
+/** FIX-32: 用 catalog 反查 plan 短名（PlanBadge / Toast / 升级按钮共用）。
+ *  catalog 没拉到 / plan 不在 catalog 里时回退服务端 PLAN_META 的静态镜像，
+ *  再不行回退 plan code 本身——保证任意状态都不显示空。 */
+export function planName(code: string, catalog: PlansCatalog | null): string {
+  const hit = catalog?.plans.find((p) => p.code === code);
+  if (hit) return hit.title;
+  return planNameFallback(code);
+}
+
+/** 长名（用于发票/正式标题）。同样三级回退。 */
+export function planLongName(code: string, catalog: PlansCatalog | null): string {
+  const hit = catalog?.plans.find((p) => p.code === code);
+  if (hit) return hit.title_long;
+  return planNameFallback(code);
+}
+
+/** 完全断网启动时的最后兜底镜像。新增 plan code 时同步加一行（可选）。 */
+function planNameFallback(code: string): string {
+  switch (code) {
+    case "pro_annual":   return "Pro 年订";
+    case "pro_flagship": return "旗舰";
+    case "pro_unlock":   return "专业解锁包";
+    case "pro_lifetime": return "终身";
+    case "free":         return "免费版";
+    default:             return code;
+  }
+}
+
 export interface CheckoutResp {
   order_id: number;
   trade_order_id: string;
@@ -160,6 +188,12 @@ export async function openPayUrl(url: string): Promise<void> {
 
 export async function reloadMe(): Promise<void> {
   await invoke("cmd_account_reload_me");
+}
+
+/** FIX-25: 单次原子拉 me + license + quota，支付成功后用。
+ *  服务端 5xx 时 Rust 侧自动 fallback 到 reloadMe 路径，不抛错。 */
+export async function reloadMeAtomic(): Promise<void> {
+  await invoke("cmd_account_reload_me_atomic");
 }
 
 export async function logout(): Promise<void> {

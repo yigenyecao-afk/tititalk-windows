@@ -143,7 +143,17 @@ impl Account {
             let lock = refresh_lock_for_handler.clone();
             let late = late_api_for_handler.clone();
             Box::pin(async move {
+                // FIX-27: 进锁前快照当前 refresh_token，进锁后再读一次。
+                // 如果两者不一致 = 别的并发 caller 已经 refresh 过且 rotate 了，
+                // 我们直接复用即可，不重复打服务端（避免 wasteful refresh）。
+                let token_before = keystore::load_refresh().unwrap_or_default();
                 let _g = lock.lock().await;
+                let token_after = keystore::load_refresh().unwrap_or_default();
+                if !token_before.is_empty() && token_before != token_after {
+                    // 锁等待期间 rotate 过 → 已经有人 refresh 完了，直接返成功。
+                    log::info!("FIX-27: refresh skipped (token rotated by another caller)");
+                    return Ok(());
+                }
                 // After acquiring lock, read current refresh token. If
                 // somebody before us already refreshed, the tokens are
                 // fresh and we skip.
@@ -153,9 +163,11 @@ impl Account {
                         return Err(ApiError::NotLoggedIn);
                     }
                 };
-                let refresh_tok = keystore::load_refresh()
-                    .filter(|s| !s.is_empty())
-                    .ok_or(ApiError::NotLoggedIn)?;
+                let refresh_tok = if token_after.is_empty() {
+                    return Err(ApiError::NotLoggedIn);
+                } else {
+                    token_after
+                };
                 match auth::perform_refresh(&api, &refresh_tok).await {
                     Ok((access, new_refresh)) => {
                         // Roll the stored refresh per spec §5.1.
@@ -659,8 +671,23 @@ impl Account {
         });
     }
 
+    /// FIX-28: 给 lib.rs 的 RunEvent::ExitRequested 用——克隆出当前 sync 的 Arc
+    /// 让退出钩子能调 flush_for_shutdown 而不持有 Account 的锁太久。
+    pub async fn sync_clone_arc(&self) -> Option<Arc<CloudConfigSync>> {
+        self.sync.lock().await.as_ref().cloned()
+    }
+
     pub async fn logout(&self) {
         let refresh = keystore::load_refresh();
+        // FIX-28: 先 flush 待发的 PUT（最多 5s），再 stop。避免用户改了
+        // 设置就立刻 logout 把改动丢了。flush 内部超时返 false 时只 log warn，
+        // 不阻塞 logout——用户的本意就是退出。
+        if let Some(s) = self.sync.lock().await.as_ref().cloned() {
+            let drained = s.flush_for_shutdown(std::time::Duration::from_secs(5)).await;
+            if !drained {
+                log::warn!("FIX-28: logout flush timed out — recent settings changes may be lost");
+            }
+        }
         // Stop sync first so its in-flight tasks don't see a cleared state.
         if let Some(s) = self.sync.lock().await.take() {
             s.stop().await;
@@ -722,6 +749,37 @@ impl Account {
                 Ok(())
             }
             Err(e) => Err(e.friendly_message()),
+        }
+    }
+
+    /// FIX-25: 单次原子拉 me + license + quota，用于支付后等需要一致快照
+    /// 的场景。/api/me/snapshot 5xx 时 fallback 到老 reload_me 路径。
+    pub async fn reload_me_atomic(&self) -> Result<(), String> {
+        #[derive(serde::Deserialize)]
+        struct SnapResp {
+            me: User,
+            license: license::LicenseInfo,
+            quota: QuotaInfo,
+            #[allow(dead_code)]
+            server_time: String,
+        }
+        match self.api.get::<SnapResp>("/api/me/snapshot").await {
+            Ok(resp) => {
+                {
+                    let mut w = self.inner.write();
+                    w.state = AuthState::Authenticated { user: resp.me.clone() };
+                    w.last_seen_plan = Some(resp.me.plan.clone());
+                    w.license = Some(resp.license.clone());
+                    w.quota = Some(resp.quota);
+                }
+                license::save(&resp.license);
+                self.emit_state();
+                Ok(())
+            }
+            Err(e) => {
+                log::info!("snapshot fallback: {}", e.friendly_message());
+                self.reload_me().await
+            }
         }
     }
 

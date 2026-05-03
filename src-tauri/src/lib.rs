@@ -132,6 +132,7 @@ pub fn run() {
             cmd_billing_get_order,
             cmd_billing_open_url,
             cmd_account_reload_me,
+            cmd_account_reload_me_atomic,
             cmd_history_recent,
             cmd_history_clear,
             cmd_open_mic_settings,
@@ -296,8 +297,24 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running TiTiTalk");
+        .build(tauri::generate_context!())
+        .expect("error while building TiTiTalk")
+        .run(|app_handle, event| {
+            // FIX-28: 应用真退出（系统/托盘 quit）前 flush CloudConfigSync 的
+            // 待发 PUT，最多 3s。绝大多数情况立即返（没有 in-flight）；只有用户
+            // 刚改完设置秒退时才真起作用。
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let state: tauri::State<'_, Arc<AppState>> = app_handle.state();
+                let acc_opt = state.account.read().clone();  // 立刻 drop guard
+                if let Some(acc) = acc_opt {
+                    tauri::async_runtime::block_on(async move {
+                        if let Some(s) = acc.sync_clone_arc().await {
+                            let _ = s.flush_for_shutdown(std::time::Duration::from_secs(3)).await;
+                        }
+                    });
+                }
+            }
+        });
 }
 
 // ---------- Tauri commands ----------
@@ -479,6 +496,16 @@ async fn cmd_account_reload_me(
 ) -> Result<(), String> {
     let acc = account_handle(&state)?;
     acc.reload_me().await
+}
+
+/// FIX-25: 单次原子拉 me + license + quota，frontend 在支付成功后调一次。
+/// 服务端 5xx 时内部自动 fallback 到 cmd_account_reload_me 等价路径。
+#[tauri::command]
+async fn cmd_account_reload_me_atomic(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let acc = account_handle(&state)?;
+    acc.reload_me_atomic().await
 }
 
 // ---------- History commands ----------

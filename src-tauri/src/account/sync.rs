@@ -180,6 +180,18 @@ impl CloudConfigSync {
             return;
         }
 
+        // FIX-29: 三方 diff 判「本地和云端改的字段是否重合」。不重合 → silent merge
+        // 自动 force PUT，不打扰用户。重合 → 弹冲突 dialog（老路径）。
+        if let Some(base) = load_last_synced_snapshot() {
+            if silent_merge_is_safe(&base, &local, &cloud.config) {
+                let merged = silent_merge(&base, &local, &cloud.config);
+                log::info!("FIX-29: silent-merging disjoint changes (no overlap)");
+                self.apply_cloud_to_local(&merged).await;
+                self.put(merged, cloud.version).await;
+                return;
+            }
+        }
+
         // Real divergence — surface to UI.
         let payload = ConflictPayload {
             local,
@@ -242,6 +254,8 @@ impl CloudConfigSync {
     /// fresh conflict). On 413 (oversize) → log + drop. Other errors →
     /// log + UI notice; next change will retry.
     async fn put(&self, local: Map<String, Value>, base_version: i64) {
+        // FIX-29: 保留 PUT body 副本，成功后存为 lastSyncedSnapshot 给下次三方 diff 用。
+        let local_for_snapshot = local.clone();
         let body = ConfigSyncIn {
             config: local,
             from_device_id: None,
@@ -255,7 +269,11 @@ impl CloudConfigSync {
             )
             .await;
         match res {
-            Ok(env) => self.set_last_known(env.version).await,
+            Ok(env) => {
+                self.set_last_known(env.version).await;
+                // FIX-29: 记录这次 PUT 的 local snapshot 给下次 412 三方 diff 用。
+                save_last_synced_snapshot(&local_for_snapshot);
+            },
             Err(e) => {
                 if e.status() == Some(412) || e.code() == Some("version_mismatch") {
                     log::info!("CloudConfigSync.put 412 — reconciling");
@@ -350,6 +368,33 @@ impl CloudConfigSync {
         g.suppress_next_change = false;
         // Wipe persisted version too — next login starts fresh.
         let _ = std::fs::remove_file(version_path());
+        // FIX-29: 同时擦三方 diff base，避免不同账户复用前账户的 base。
+        clear_last_synced_snapshot();
+    }
+
+    /// FIX-28: Logout / app exit 前调，把 in-flight + 待 debounce 的 PUT 落地。
+    /// timeout 秒后没完成则 false（调用方 toast 提示用户最近改动可能丢）。
+    /// 设计：3s debounce 没到的本地改动也强 trigger 一次 PUT 兜底。
+    pub async fn flush_for_shutdown(self: &Arc<Self>, timeout: Duration) -> bool {
+        // 立刻 trigger 一次 PUT（吃掉 debounce 没到的待发改动）。
+        // schedule_put 走异步 sleep 3s 不行——我们直接 kick_off_put。
+        let me = self.clone();
+        let kick = tauri::async_runtime::spawn(async move {
+            me.kick_off_put().await;
+        });
+        // poll put_in_flight 直到落地或 timeout。
+        let start = std::time::Instant::now();
+        let _ = tokio::time::timeout(timeout, async {
+            let _ = kick.await;
+            // 再 poll 一会，确保 in-flight 也清。
+            loop {
+                if !self.inner.lock().await.put_in_flight {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }).await;
+        start.elapsed() <= timeout
     }
 
     async fn set_last_known(&self, v: i64) {
@@ -422,6 +467,12 @@ pub fn snapshot_from_config_with_overlay(
     // now, but cheap insurance against future drift).
     let allow = allowed_keys();
     m.retain(|k, _| allow.contains(k.as_str()));
+    // FIX-31: cloud_ui = None 时（bootstrap GET 失败 / 首次同步）打 partial flag。
+    // 服务端 me.py:put_config 看到此字段 → ui_preferences 走字段级 merge 路径，
+    // 不擦云端独有字段（如 Mac 的 floating_pill_enabled）。flag 不入加密 blob。
+    if cloud_ui.is_none() {
+        m.insert("ui_preferences_partial".into(), Value::Bool(true));
+    }
     m
 }
 
@@ -569,4 +620,142 @@ fn load_version_disk() -> i64 {
 
 fn save_version_disk(v: i64) {
     let _ = std::fs::write(version_path(), v.to_string());
+}
+
+// --- FIX-29 silent merge --------------------------------------------------
+
+fn last_synced_snapshot_path() -> PathBuf {
+    let mut p = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    p.push("TiTiTalk");
+    let _ = std::fs::create_dir_all(&p);
+    p.push("cloud_last_synced.json");
+    p
+}
+
+pub(crate) fn load_last_synced_snapshot() -> Option<Map<String, Value>> {
+    let raw = std::fs::read_to_string(last_synced_snapshot_path()).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+pub(crate) fn save_last_synced_snapshot(snap: &Map<String, Value>) {
+    if let Ok(s) = serde_json::to_string(snap) {
+        let _ = std::fs::write(last_synced_snapshot_path(), s);
+    }
+}
+
+pub(crate) fn clear_last_synced_snapshot() {
+    let _ = std::fs::remove_file(last_synced_snapshot_path());
+}
+
+/// FIX-29: 三方 diff 判断本地和云端改的字段是否「不重合」。返 true → silent merge 安全。
+pub(crate) fn silent_merge_is_safe(
+    base: &Map<String, Value>,
+    local: &Map<String, Value>,
+    cloud: &Map<String, Value>,
+) -> bool {
+    let local_changes = changed_keys(base, local);
+    let cloud_changes = changed_keys(base, cloud);
+    let overlap: HashSet<&String> = local_changes.intersection(&cloud_changes).collect();
+    if overlap.is_empty() {
+        return true;
+    }
+    if overlap.len() == 1 && overlap.contains(&"dictionaries".to_string()) {
+        let b_arr = base
+            .get("dictionaries")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let l_arr = local
+            .get("dictionaries")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let c_arr = cloud
+            .get("dictionaries")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let b_set: HashSet<String> = b_arr.iter().cloned().collect();
+        let l_set: HashSet<String> = l_arr.iter().cloned().collect();
+        let c_set: HashSet<String> = c_arr.iter().cloned().collect();
+        let l_added: HashSet<String> = l_set.difference(&b_set).cloned().collect();
+        let c_added: HashSet<String> = c_set.difference(&b_set).cloned().collect();
+        let l_removed: HashSet<String> = b_set.difference(&l_set).cloned().collect();
+        let c_removed: HashSet<String> = b_set.difference(&c_set).cloned().collect();
+        if l_added.is_disjoint(&c_removed) && c_added.is_disjoint(&l_removed) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 字段级 silent merge：cloud 为底，local 单边改的字段用 local 值覆盖；
+/// dictionaries 双端都改时取并集（按 silent_merge_is_safe 已确认无冲突）。
+pub(crate) fn silent_merge(
+    base: &Map<String, Value>,
+    local: &Map<String, Value>,
+    cloud: &Map<String, Value>,
+) -> Map<String, Value> {
+    let mut out = cloud.clone();
+    let local_changes = changed_keys(base, local);
+    let cloud_changes = changed_keys(base, cloud);
+    for key in &local_changes {
+        if !cloud_changes.contains(key) {
+            if let Some(v) = local.get(key) {
+                out.insert(key.clone(), v.clone());
+            }
+        } else if key == "dictionaries" {
+            let b_arr = base
+                .get("dictionaries")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let l_arr = local
+                .get("dictionaries")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let c_arr = cloud
+                .get("dictionaries")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let b_set: HashSet<String> = b_arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+            let kept: Vec<Value> = b_arr
+                .iter()
+                .filter(|v| {
+                    let s = v.as_str().unwrap_or("").to_string();
+                    l_arr.iter().any(|x| x.as_str() == Some(&s))
+                        && c_arr.iter().any(|x| x.as_str() == Some(&s))
+                })
+                .cloned()
+                .collect();
+            let mut merged = kept.clone();
+            for v in &c_arr {
+                if !b_set.contains(v.as_str().unwrap_or("")) && !merged.iter().any(|m| m == v) {
+                    merged.push(v.clone());
+                }
+            }
+            for v in &l_arr {
+                if !b_set.contains(v.as_str().unwrap_or("")) && !merged.iter().any(|m| m == v) {
+                    merged.push(v.clone());
+                }
+            }
+            out.insert("dictionaries".into(), Value::Array(merged));
+        }
+    }
+    out
+}
+
+fn changed_keys(base: &Map<String, Value>, other: &Map<String, Value>) -> HashSet<String> {
+    let all_keys: HashSet<&String> = base.keys().chain(other.keys()).collect();
+    let mut changed = HashSet::new();
+    for k in all_keys {
+        let bv = base.get(k);
+        let ov = other.get(k);
+        if bv != ov {
+            changed.insert(k.clone());
+        }
+    }
+    changed
 }

@@ -9,7 +9,12 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-const GRACE_SECS: i64 = 7 * 86400;
+/// FIX-26: 两层 grace。
+///   • USABILITY — 7 天断网兜底，付费用户云能力不被「掉线一晚」打断
+///   • UPGRADE_DETECT — 1 小时窗口，超过则建议 UI 主动 refreshLicense
+///     一次（覆盖「用户在 web 续费但本地缓存还显快过期」场景）
+const USABILITY_GRACE_SECS: i64 = 7 * 86400;
+const UPGRADE_DETECT_WINDOW_SECS: i64 = 3600;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LicenseInfo {
@@ -59,17 +64,28 @@ pub fn clear() {
 /// server stamping a different ISO8601 dialect doesn't permanently lock
 /// out the user.
 pub fn is_within_grace(info: &LicenseInfo, now: DateTime<Utc>) -> bool {
-    let parsed = DateTime::parse_from_rfc3339(&info.checked_at)
-        .map(|d| d.with_timezone(&Utc));
-    let checked = match parsed {
-        Ok(d) => d,
+    age_seconds(info, now) <= USABILITY_GRACE_SECS
+}
+
+/// FIX-26: 缓存陈旧到要主动 refresh license 一次了吗？
+/// `true` = 缓存超 1h，UI 进入「即将到期 / 升级提醒」分支前应触发后台
+/// refresh，避免「用户已续费但本地缓存还显示快过期」。
+/// 与 is_within_grace 解耦：超 1h 仍 < 7d 时 can_use_cloud 仍放行，
+/// 只是顺手刷新一次让 UI 准。
+#[allow(dead_code)]
+pub fn needs_fresh_check_for_upgrade(info: &LicenseInfo, now: DateTime<Utc>) -> bool {
+    age_seconds(info, now) > UPGRADE_DETECT_WINDOW_SECS
+}
+
+fn age_seconds(info: &LicenseInfo, now: DateTime<Utc>) -> i64 {
+    match DateTime::parse_from_rfc3339(&info.checked_at) {
+        Ok(d) => (now - d.with_timezone(&Utc)).num_seconds(),
         Err(_) => {
             log::warn!(
-                "LicenseCache: unparseable checked_at '{}' — assuming in-grace",
+                "LicenseCache: unparseable checked_at '{}' — assuming fresh",
                 info.checked_at
             );
-            return true;
+            0
         }
-    };
-    (now - checked).num_seconds() <= GRACE_SECS
+    }
 }

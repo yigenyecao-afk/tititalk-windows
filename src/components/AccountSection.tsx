@@ -14,6 +14,7 @@ import {
   onAccountState,
   openPayUrl,
   reloadMe,
+  reloadMeAtomic,
   startLogin,
   unbindDevice,
   type AccountSnapshot,
@@ -462,36 +463,76 @@ function UpgradeCard() {
     if (pollRef.current) window.clearInterval(pollRef.current);
     // (A1/A3) 轮询失败的累计计数 —— 单次失败不打扰用户，连续 ≥3 次
     // （6s 还在抖）才提示「网络不稳，重试中」。这样既不噪也不沉默。
+    // FIX-30: fast 阶段 15min × 2s = 450 次；超时进 slow 阶段 30s × 60 次 = 30min。
+    // 总检测窗口 45min，仍 < 服务端 Order 1h 过期。pollWarn 持续提示「正在检测」，
+    // 不立即标 expired —— 让付完款的用户也能等到 webhook 自动激活。
     let consecutiveFails = 0;
+    let inSlowMode = false;
+    let slowStartAt = 0;
     pollRef.current = window.setInterval(async () => {
       try {
         const o = await billingGetOrder(orderId);
         consecutiveFails = 0;
-        setPollWarn("");
+        if (!inSlowMode) setPollWarn("");
         setPending((cur) => cur ? { ...cur, status: o.status } : cur);
         if (o.status === "paid") {
           stopPolling();
           // Fresh /me + catalog so plan/owns flip in UI immediately.
-          await reloadMe();
+          // FIX-25: 用原子 snapshot 拉 me+license+quota，避免 UI 半态。
+          await reloadMeAtomic();
           const fresh = await getBillingPlans();
           setCatalog(fresh);
-          // Auto-close after 1.5s so user sees the "✓ 已付款" first.
           window.setTimeout(() => setPending(null), 1500);
-        } else if (o.status === "expired" || o.status === "failed" || o.status === "refunded") {
+          return;
+        }
+        if (o.status === "expired" || o.status === "failed" || o.status === "refunded") {
           stopPolling();
-        } else if (Date.now() - (pending?.startedAt ?? Date.now()) > 5 * 60_000) {
+          return;
+        }
+        const elapsed = Date.now() - (pending?.startedAt ?? Date.now());
+        if (!inSlowMode && elapsed > 15 * 60_000) {
+          // 进入慢轮询模式：30s 一次再等 30min，共 45min 检测窗口。
+          inSlowMode = true;
+          slowStartAt = Date.now();
+          setPollWarn("支付检测较慢（已 15 分钟）。如已付款，正继续后台检测，可点「立即检查」主动重试。");
           stopPolling();
-          setPayErr("支付超时（5 分钟未确认）。如已付款，请稍后重开应用，或邮件 hi@tititalk.com。");
+          pollRef.current = window.setInterval(slowTick, 30000) as unknown as number;
         }
       } catch (e) {
-        // 单次抖动不打扰，但持续失败要给反馈。
         consecutiveFails += 1;
         console.info("billing poll:", e);
         if (consecutiveFails === 3) {
-          setPollWarn("网络不稳，正在持续重试…如果你已付完款，5 分钟内会自动检测到。");
+          setPollWarn("网络不稳，正在持续重试…如果你已付完款，15 分钟内会自动检测到。");
         }
       }
     }, 2000) as unknown as number;
+
+    // 慢轮询 tick：30s 一次直到 paid / 终态 / 30min 累计超时。
+    async function slowTick() {
+      try {
+        const o = await billingGetOrder(orderId);
+        setPending((cur) => cur ? { ...cur, status: o.status } : cur);
+        if (o.status === "paid") {
+          stopPolling();
+          // FIX-25: 用原子 snapshot 拉 me+license+quota，避免 UI 半态。
+          await reloadMeAtomic();
+          const fresh = await getBillingPlans();
+          setCatalog(fresh);
+          window.setTimeout(() => setPending(null), 1500);
+          return;
+        }
+        if (o.status === "expired" || o.status === "failed" || o.status === "refunded") {
+          stopPolling();
+          return;
+        }
+        if (Date.now() - slowStartAt > 30 * 60_000) {
+          stopPolling();
+          setPayErr("订单已超过最长检测窗口（45 分钟）。如已付款请联系 hi@tititalk.com。");
+        }
+      } catch (e) {
+        console.info("billing slow poll:", e);
+      }
+    }
   }
 
   function stopPolling() {
