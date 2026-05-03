@@ -95,18 +95,18 @@ echo "==> 上传 $EXE_NAME ($SIZE_BYTES bytes, sha=${SHA256:0:12}…)"
 # 3. 上传到服务器，原子换 symlink + chmod 644
 SERVER_EXE_NAME="TiTiTalk-windows-${VERSION}-setup.exe"
 SERVER_SIG_NAME="${SERVER_EXE_NAME}.sig"
-scp -q "$LOCAL_EXE" "$SERVER:$SERVER_DOWNLOADS/$SERVER_EXE_NAME"
+scp -q -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$LOCAL_EXE" "$SERVER:$SERVER_DOWNLOADS/$SERVER_EXE_NAME"
 ssh "$SERVER" "ln -sfn $SERVER_EXE_NAME $SERVER_DOWNLOADS/TiTiTalk-windows-latest.exe.new && mv -f $SERVER_DOWNLOADS/TiTiTalk-windows-latest.exe.new $SERVER_DOWNLOADS/TiTiTalk-windows-latest.exe && chmod 644 $SERVER_DOWNLOADS/$SERVER_EXE_NAME"
 
 # 3b. 上传 .sig + windows-update.json（updater 闭环；缺则跳过 + 警告）
 if [[ -f "$LOCAL_SIG" ]]; then
-    scp -q "$LOCAL_SIG" "$SERVER:$SERVER_DOWNLOADS/$SERVER_SIG_NAME"
+    scp -q -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$LOCAL_SIG" "$SERVER:$SERVER_DOWNLOADS/$SERVER_SIG_NAME"
     ssh "$SERVER" "chmod 644 $SERVER_DOWNLOADS/$SERVER_SIG_NAME"
 else
     echo "⚠️  无 ${SIG_NAME}，跳过 updater 通道（用户不会收到自动更新）"
 fi
 if [[ -f "$LOCAL_UPDATE_JSON" ]]; then
-    scp -q "$LOCAL_UPDATE_JSON" "$SERVER:$SERVER_DOWNLOADS/windows-update.json.new"
+    scp -q -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$LOCAL_UPDATE_JSON" "$SERVER:$SERVER_DOWNLOADS/windows-update.json.new"
     ssh "$SERVER" "mv -f $SERVER_DOWNLOADS/windows-update.json.new $SERVER_DOWNLOADS/windows-update.json && chmod 644 $SERVER_DOWNLOADS/windows-update.json"
 else
     echo "⚠️  无 windows-update.json，跳过 updater 元数据更新"
@@ -128,7 +128,7 @@ cat > "$WIN_LATEST" <<EOF
   "notes_url": "https://github.com/yigenyecao-afk/tititalk-windows/releases/tag/v$VERSION"
 }
 EOF
-scp -q "$WIN_LATEST" "$SERVER:$SERVER_DOWNLOADS/windows-latest.json.new"
+scp -q -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$WIN_LATEST" "$SERVER:$SERVER_DOWNLOADS/windows-latest.json.new"
 ssh "$SERVER" "mv -f $SERVER_DOWNLOADS/windows-latest.json.new $SERVER_DOWNLOADS/windows-latest.json && chmod 644 $SERVER_DOWNLOADS/windows-latest.json"
 rm -f "$WIN_LATEST"
 
