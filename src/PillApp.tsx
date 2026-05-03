@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { onPipeline, getConfig } from "./lib/api";
 import type { PipelinePhase } from "./lib/types";
+import {
+  PILL_LABEL,
+  PILL_WIDTH,
+  PILL_HEIGHT,
+  PILL_FONT_SIZE,
+  PILL_FADE_PERCENT,
+} from "./lib/pill-constants";
 
 /// (v0.8.4 typeless 学习 P1 #5) PTT「松开即停」短引导。新 PTT 用户每次
 /// pill 出现就 +1 计数（localStorage），≥5 次后停止显示，不打扰熟练用户。
@@ -14,21 +21,20 @@ function bumpPttHintShown() {
   localStorage.setItem("pttHintShownCount", String(n + 1));
 }
 
-/// Pill UI — 跟 Mac 4 主题统一的丝滑流：
-///   • 第一次拿到文字直接显示（不做起手 typewriter）
-///   • 后续 partial 增长由 60fps requestAnimationFrame 平滑追字符，
-///     gap 大时加速，避免「partial 跳 20 字一闪一闪」的卡顿感
+/// (v0.8.7) 缩 30% + 文字居中 + 状态精简。整个 pill 体系只 3 状态：
+///   1. 「聆听中…」 — recording 没文字 / transcribing 没文字
+///   2. ASR 实时文本展示
+///   3. 「AI 润色中…」 — polishing 没流式文本
+/// 旧的「识别中…」「插入…」「结束…」「失败」label 全删（用户验收要求）。
 export default function PillApp() {
   const [phase, setPhase] = useState<PipelinePhase>("idle");
   const [rms, setRms] = useState(0);
-  const [target, setTarget] = useState<string>("");
+  const [, setTarget] = useState<string>("");
   const [displayed, setDisplayed] = useState<string>("");
   // (ISSUE-2 2026-05-03) tititalk_cloud cold-connect 标识 —— 后端在
   // start_session_async 之前 emit connecting=true，ready 抵达后 emit false。
-  // recording 阶段时如果 true，pill 文案换成「录音中… 连接云端」让用户知道
-  // 是网络等待 (实测 2-3s)，不是 pill 没工作。
   const [cloudConnecting, setCloudConnecting] = useState(false);
-  // (P1 #5) PTT 引导：拉一次 hotkey_mode 决定要不要显示「松开即停」
+  // (P1 #5) PTT 引导
   const [hotkeyMode, setHotkeyMode] = useState<string>("hybrid");
   useEffect(() => {
     getConfig()
@@ -51,7 +57,6 @@ export default function PillApp() {
         displayedRef.current = next;
         setDisplayed(next);
       } else if (d !== t) {
-        // target 缩短/被替换 → 拉齐
         displayedRef.current = t;
         setDisplayed(t);
       }
@@ -81,29 +86,28 @@ export default function PillApp() {
       } else if (ev.kind === "level") {
         setRms(ev.rms);
       } else if (ev.kind === "partial") {
-        const next = truncate(ev.text, 22);
+        // (v0.8.7) 不再 truncate —— 居中容器配 fade-mask + trailing scroll，
+        // 长文本自然滚字而不是 ASCII "..." 截断。
+        const next = ev.text;
         targetRef.current = next;
         setTarget(next);
-        // 第一次拿到文字 → 直接 snap 到 target，避免起手 typewriter 卡顿感
         if (displayedRef.current === "") {
           displayedRef.current = next;
           setDisplayed(next);
         } else if (!next.startsWith(displayedRef.current)) {
-          // partial 回退/被重写 → snap 到最长公共前缀，loop 再追
           const prefix = commonPrefix(displayedRef.current, next);
           displayedRef.current = prefix;
           setDisplayed(prefix);
         }
       } else if (ev.kind === "transcript") {
-        const next = truncate(ev.text, 22);
+        const next = ev.text;
         targetRef.current = next;
         setTarget(next);
       } else if (ev.kind === "error") {
-        const next = "出错";
-        targetRef.current = next;
-        displayedRef.current = next;
-        setTarget(next);
-        setDisplayed(next);
+        targetRef.current = "";
+        displayedRef.current = "";
+        setTarget("");
+        setDisplayed("");
       } else if (ev.kind === "cloud_connecting") {
         setCloudConnecting(ev.connecting);
       }
@@ -113,17 +117,63 @@ export default function PillApp() {
     };
   }, []);
 
-  const { color: phaseColor, label: rawLabel } = renderState(phase);
-  // (ISSUE-2) cold-connect 期间换文案
-  const label = phase === "recording" && cloudConnecting ? "录音中… 连接云端" : rawLabel;
-  const bars = barLevels(rms);
-  const showText = displayed || (target ? "" : label);
+  // (v0.8.7) 5 状态映射 → 3 显示模式：
+  //   recording 无文字 / stopping → listening label
+  //   recording 有文字 / transcribing → 实时文本
+  //   polishing 无 polished → polishing label
+  //   polishing 有 polished → 流式润色文本
+  //   inserting → 流式润色文本（如有）/ 实时文本
+  //   error → 「出错」（不展开错误细节，避免占满 pill）
+  type DisplayMode = "listening" | "live" | "polishing" | "error" | "hidden";
+  const mode: DisplayMode = (() => {
+    if (phase === "idle" || phase === "done") return "hidden";
+    if (phase === "failed") return "error";
+    // polish 阶段：partial 事件复用为 polish stream 载体（同 Mac），有 displayed 即流式
+    if (phase === "polishing") return displayed ? "live" : "polishing";
+    if (phase === "inserting") return "live";
+    if (phase === "transcribing") return displayed ? "live" : "listening";
+    if (phase === "recording" || phase === "stopping") return displayed ? "live" : "listening";
+    return "listening";
+  })();
 
-  // (P1 #5) PTT 引导显示条件：录音中 + push_to_talk/hybrid + 没攒满 5 次
+  const showText = (() => {
+    switch (mode) {
+      case "listening":
+        return cloudConnecting ? `${PILL_LABEL.listening} · 连接云端` : PILL_LABEL.listening;
+      case "polishing":
+        return PILL_LABEL.polishing;
+      case "live":
+        return displayed;
+      case "error":
+        return "出错";
+      default:
+        return "";
+    }
+  })();
+
+  // 状态点颜色（替代多 label，给状态一个最小化视觉指示器）
+  const dotColor = (() => {
+    switch (mode) {
+      case "listening":
+        return "#ef4444";
+      case "live":
+        return phase === "polishing" || phase === "inserting" ? "#a78bfa" : "#ef4444";
+      case "polishing":
+        return "#a78bfa";
+      case "error":
+        return "#f97316";
+      default:
+        return "#83868d";
+    }
+  })();
+
   const showPttHint = phase === "recording" && shouldShowPttHint(hotkeyMode);
   useEffect(() => {
     if (showPttHint) bumpPttHintShown();
   }, [showPttHint]);
+
+  // fade-mask 两端柔淡出
+  const fadeMask = `linear-gradient(to right, transparent 0%, white ${PILL_FADE_PERCENT}%, white ${100 - PILL_FADE_PERCENT}%, transparent 100%)`;
 
   return (
     <div className="h-screen w-screen flex flex-col items-center justify-center select-none">
@@ -135,67 +185,51 @@ export default function PillApp() {
           松开即停 →
         </div>
       )}
-      <div
-        className="flex items-center gap-3 rounded-full px-4 py-2 shadow-2xl backdrop-blur-md"
-        style={{
-          background: "rgba(15, 16, 20, 0.86)",
-          border: "1px solid rgba(255,255,255,0.08)",
-        }}
-      >
-        {phase === "recording" || phase === "transcribing" || phase === "stopping" ? (
-          <>
-            <div className="flex items-end gap-[3px] h-5">
-              {bars.map((h, i) => (
-                <div
-                  key={i}
-                  className="w-[3px] rounded-sm transition-all duration-75"
-                  style={{
-                    height: `${h}%`,
-                    background: phaseColor,
-                    opacity: phase === "recording" ? 1 : 0.55,
-                  }}
-                />
-              ))}
-            </div>
-            <span className="text-[13px] font-medium" style={{ color: "#f7f7f8" }}>
+      {mode !== "hidden" && (
+        <div
+          className="flex items-center gap-2 rounded-full shadow-2xl backdrop-blur-md"
+          style={{
+            width: PILL_WIDTH,
+            height: PILL_HEIGHT,
+            paddingLeft: 10,
+            paddingRight: 10,
+            background: "rgba(15, 16, 20, 0.86)",
+            border: "1px solid rgba(255,255,255,0.08)",
+          }}
+        >
+          <span
+            className="rounded-full shrink-0"
+            style={{
+              width: 6,
+              height: 6,
+              background: dotColor,
+              boxShadow: `0 0 6px ${dotColor}`,
+              opacity: phase === "recording" && rms > 0.05 ? 1 : 0.7,
+            }}
+          />
+          {/* 居中 + fade-mask 容器：内层 inline-block 让窄文本自动居中；
+              超长文本随 ASR 流入向右溢出，mask 两端柔淡出。 */}
+          <div
+            className="flex-1 overflow-hidden"
+            style={{
+              maskImage: fadeMask,
+              WebkitMaskImage: fadeMask,
+            }}
+          >
+            <div
+              className="text-center font-medium whitespace-nowrap"
+              style={{
+                color: "#f7f7f8",
+                fontSize: PILL_FONT_SIZE,
+              }}
+            >
               {showText}
-            </span>
-          </>
-        ) : (
-          <span className="text-[13px] font-medium" style={{ color: "#f7f7f8" }}>
-            {displayed || label}
-          </span>
-        )}
-      </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
-
-function renderState(phase: PipelinePhase): { color: string; label: string } {
-  switch (phase) {
-    case "recording":     return { color: "#ef4444", label: "录音中…" };
-    case "stopping":      return { color: "#f59e0b", label: "结束…" };
-    case "transcribing":  return { color: "#93c5fd", label: "识别中…" };
-    case "polishing":     return { color: "#a78bfa", label: "润色中…" };
-    case "inserting":     return { color: "#22c55e", label: "插入…" };
-    case "done":          return { color: "#22c55e", label: "完成" };
-    case "failed":        return { color: "#ef4444", label: "失败" };
-    default:              return { color: "#83868d", label: "" };
-  }
-}
-
-function barLevels(rms: number): number[] {
-  const norm = Math.min(1, Math.max(0, rms * 6));
-  return Array.from({ length: 6 }, (_, i) => {
-    const phase = i / 5;
-    const wobble = 0.5 + 0.5 * Math.sin(Date.now() / 80 + i);
-    const h = (norm * 70 + 10) * (0.6 + 0.4 * wobble) * (1 - 0.15 * Math.abs(0.5 - phase));
-    return Math.max(8, Math.min(100, h));
-  });
-}
-
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
 function commonPrefix(a: string, b: string): string {
