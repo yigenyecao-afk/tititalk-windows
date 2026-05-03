@@ -164,6 +164,24 @@ impl AppState {
                     crate::audio::orchestrate_stop(s).await;
                 });
             }
+            // (v0.8.3 P0-3) ESC 取消 —— 任意忙态请求 Idle 都视为 cancel 信号。
+            // 跟 Stopping 区别：丢弃 PCM、不转写、不插入。
+            (cur, PipelinePhase::Idle)
+                if matches!(
+                    cur,
+                    PipelinePhase::Recording
+                        | PipelinePhase::Stopping
+                        | PipelinePhase::Transcribing
+                        | PipelinePhase::Polishing
+                        | PipelinePhase::Inserting
+                ) =>
+            {
+                self.set_phase(PipelinePhase::Stopping);
+                let s = self.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::audio::orchestrate_cancel(s).await;
+                });
+            }
             _ => {
                 log::debug!(
                     "phase request ignored: {:?} → {:?}",

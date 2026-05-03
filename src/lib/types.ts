@@ -19,7 +19,20 @@ export interface AppConfig {
   sound_feedback_volume: number;
   history_retention_days: number;
   history_cleanup_enabled: boolean;
+  // (v0.8.3 typeoff 吸收) — 跟 Mac 2.10.35 同源
+  /// P0-1 云端 ASR 5s 内未 ready → 自动回退到本地（如已配 BYOK qwen / openai key）。默认 ON。
+  cloud_auto_fallback_to_local: boolean;
+  /// P0-2 中文 ↔ 英文/数字 边界自动加空格（typeoff v1.0.53）。默认 ON。
+  cjk_auto_space: boolean;
+  /// P0-3 录音/转写中按 ESC 立即取消（typeoff v1.0.50）。默认 ON。
+  esc_cancel: boolean;
+  /// P0-5 录音中静音系统输出，停止后恢复（typeoff v1.0.47）。默认 OFF。
+  mute_system_during_recording: boolean;
+  /// P1-3 润色强度："light" / "normal" / "heavy"。默认 "normal"。
+  polish_intensity: PolishIntensity;
 }
+
+export type PolishIntensity = "light" | "normal" | "heavy";
 
 // FIX-20 (qa-2026-05-03): code persona 加入联合类型，跟 Mac 端对齐
 export type StylistPersona = "friendly" | "formal" | "mixed_zh_en" | "code";

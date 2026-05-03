@@ -9,6 +9,8 @@ mod insertion;
 mod pill;
 mod state;
 mod stylist;
+mod system_audio_muter;
+mod text_post_process;
 mod tray;
 
 use std::io::Write;
@@ -120,6 +122,7 @@ pub fn run() {
             cmd_test_asr,
             cmd_force_record_start,
             cmd_force_record_stop,
+            cmd_force_record_cancel,
             cmd_open_main_window,
             cmd_account_login_start,
             cmd_account_logout,
@@ -360,6 +363,13 @@ fn cmd_force_record_start(state: tauri::State<'_, Arc<AppState>>) -> Result<(), 
 #[tauri::command]
 fn cmd_force_record_stop(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
     state.request_phase(PipelinePhase::Stopping);
+    Ok(())
+}
+
+/// (v0.8.3 P0-3) ESC 取消 —— 跟 stop 不同，丢弃 PCM 不转写不插入不计配额。
+#[tauri::command]
+fn cmd_force_record_cancel(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    state.request_phase(PipelinePhase::Idle);
     Ok(())
 }
 

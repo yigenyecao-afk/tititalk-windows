@@ -73,6 +73,22 @@ pub struct AppConfig {
     /// Stylist model. Defaults to qwen-turbo for speed; user can switch to qwen-plus.
     #[serde(default = "default_stylist_model")]
     pub stylist_model: String,
+    // ---- v0.8.3 typeoff 吸收（跟 Mac 2.10.35 同源） ----
+    /// P0-1: 云端 ASR 5s 内未 ready → 自动回退到本地 / 备用引擎。默认 ON。
+    #[serde(default = "yes")]
+    pub cloud_auto_fallback_to_local: bool,
+    /// P0-2: 中文 ↔ Latin 边界自动加空格（typeoff v1.0.53 同款排版规则）。默认 ON。
+    #[serde(default = "yes")]
+    pub cjk_auto_space: bool,
+    /// P0-3: 录音/转写中按 ESC 立即取消（typeoff v1.0.50）。默认 ON。
+    #[serde(default = "yes")]
+    pub esc_cancel: bool,
+    /// P0-5: 录音中静音系统输出，停止后恢复（typeoff v1.0.47）。默认 OFF。
+    #[serde(default = "no")]
+    pub mute_system_during_recording: bool,
+    /// P1-3: 润色强度 "light" / "normal" / "heavy"。默认 "normal" 保留旧行为。
+    #[serde(default = "default_polish_intensity")]
+    pub polish_intensity: String,
 }
 
 fn default_engine() -> String { "tititalk_cloud".into() }
@@ -102,6 +118,7 @@ fn default_hotkey_mode() -> String { "hybrid".into() }
 fn default_hybrid_threshold_ms() -> u32 { 250 }
 fn default_sound_volume() -> f32 { 0.4 }
 fn default_history_retention_days() -> u32 { 30 }
+fn default_polish_intensity() -> String { "normal".into() }
 fn yes() -> bool { true }
 fn no() -> bool { false }
 
@@ -126,6 +143,11 @@ impl Default for AppConfig {
             sound_feedback_volume: default_sound_volume(),
             history_retention_days: default_history_retention_days(),
             history_cleanup_enabled: false,
+            cloud_auto_fallback_to_local: true,
+            cjk_auto_space: true,
+            esc_cancel: true,
+            mute_system_during_recording: false,
+            polish_intensity: default_polish_intensity(),
         }
     }
 }

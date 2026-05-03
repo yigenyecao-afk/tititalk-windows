@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import {
   checkMicrophone,
   clearHistory,
+  forceCancel,
   forceStart,
   forceStop,
   getConfig,
@@ -147,6 +148,23 @@ export default function App() {
     };
   }, []);
 
+  // (v0.8.3 P0-3) ESC 取消录音/转写。独立 useEffect 跟着 cfg.esc_cancel + phase
+  // 重新挂，闭包永远拿到最新值。聚焦输入框时不吞 ESC（用户日常关弹窗仍可用）。
+  useEffect(() => {
+    if (!cfg?.esc_cancel) return;
+    const busy = phase !== "idle" && phase !== "done" && phase !== "failed";
+    if (!busy) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      forceCancel().catch((err) => console.warn("ESC cancel:", err));
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [cfg?.esc_cancel, phase]);
+
   const proUnlocked = isProUnlocked(account);
 
   if (!cfg) return <div className="p-10 text-ink-500">加载中…</div>;
@@ -244,6 +262,15 @@ export default function App() {
               onGoSettings={() => setShowSettings(true)}
               onGoAccount={() => setShowAccount(true)}
               onDismissError={() => setLastError("")}
+              onPatchCfg={async (patch) => {
+                const next = { ...cfg, ...patch };
+                try {
+                  await saveConfig(next);
+                  setCfg(next);
+                } catch (e) {
+                  console.error("patch cfg:", e);
+                }
+              }}
             />
           </div>
         )}
@@ -738,8 +765,77 @@ function HomeQuotaCard({
   );
 }
 
+/**
+ * (typeoff 吸收 #10) 把润色风格从 Settings sheet 深处搬到首页 chip 行 ——
+ * 用户随时切「关闭/口语/书面/中英混合/代码」。绑回 cfg.stylist_enabled +
+ * cfg.stylist_persona（与 SettingsSheet 同源）。
+ */
+function HomeStylePicker({
+  cfg, onPatch,
+}: {
+  cfg: AppConfig;
+  onPatch: (patch: Partial<AppConfig>) => void;
+}) {
+  type Opt = { id: string; label: string; persona?: AppConfig["stylist_persona"]; off?: boolean };
+  const opts: Opt[] = [
+    { id: "off",          label: "原文",     off: true },
+    { id: "friendly",     label: "口语",     persona: "friendly" },
+    { id: "formal",       label: "书面",     persona: "formal" },
+    { id: "mixed_zh_en",  label: "中英混合", persona: "mixed_zh_en" },
+    { id: "code",         label: "代码",     persona: "code" },
+  ];
+  const currentId = !cfg.stylist_enabled ? "off" : cfg.stylist_persona;
+
+  return (
+    <div className="rounded-lg bg-white/[0.02] border border-white/5 p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[11px] font-semibold text-ink-400 uppercase tracking-wider">当前风格</span>
+        {currentId !== "off" && currentId !== "friendly" && (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-300">
+            已锁定
+          </span>
+        )}
+        <div className="flex-1" />
+        {currentId !== "friendly" && (
+          <button
+            onClick={() => onPatch({ stylist_enabled: true, stylist_persona: "friendly" })}
+            className="text-[11px] text-ink-500 hover:text-ink-300"
+          >
+            重置默认
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {opts.map((o) => {
+          const isSelected = currentId === o.id;
+          return (
+            <button
+              key={o.id}
+              onClick={() =>
+                onPatch(
+                  o.off
+                    ? { stylist_enabled: false }
+                    : { stylist_enabled: true, stylist_persona: o.persona! },
+                )
+              }
+              className={
+                "px-2.5 py-1 rounded-full text-[12px] transition " +
+                (isSelected
+                  ? "bg-violet-500/20 text-violet-300 ring-1 ring-violet-500/40 font-medium"
+                  : "bg-white/[0.04] text-ink-300 hover:bg-white/[0.08]")
+              }
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function HomePane({
-  cfg, account, phase, lastError, onGoSettings, onGoAccount, onDismissError,
+  cfg, account, phase, lastError, onGoSettings, onGoAccount, onDismissError, onPatchCfg,
 }: {
   cfg: AppConfig;
   account: AccountSnapshot | null;
@@ -748,6 +844,7 @@ function HomePane({
   onGoSettings: () => void;
   onGoAccount: () => void;
   onDismissError: () => void;
+  onPatchCfg: (patch: Partial<AppConfig>) => void;
 }) {
   // 麦克风权限自检 —— 首次启动 + phase 回到 idle 时各自检一次。
   // null = 还在检；true = 可用；false = 不可用（reason 是给用户看的人话）。
@@ -822,6 +919,8 @@ function HomePane({
       </div>
 
       <HomeQuotaCard account={account} onUpgrade={onGoAccount} />
+
+      <HomeStylePicker cfg={cfg} onPatch={onPatchCfg} />
 
       {/* Status / blocker banners — show ONE at a time, top→bottom priority.
           mic 权限放最高 —— 没麦克风后面什么都白搭；其次是登录；其次是 BYOK key；

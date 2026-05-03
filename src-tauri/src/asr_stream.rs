@@ -72,12 +72,25 @@ async fn prepare_and_run(
     stop_rx: oneshot::Receiver<()>,
 ) -> anyhow::Result<String> {
     let event_tx_clear = state.event_tx.clone();
+    // (v0.8.3 P0-1) 提前抓一些字段用于失败友好提示
+    let cfg_for_hint = state.config.read().clone();
     let session = match start_session(state, sample_rate).await {
         Ok(s) => s,
         Err(e) => {
             // (ISSUE-2 2026-05-03) prepare 失败也要清 cloud-connect 标识，
             // 否则 pill 永远停在「录音中… 连接云端」。
             let _ = event_tx_clear.send(PipelineEvent::CloudConnecting { connecting: false });
+            // (v0.8.3 P0-1) cloud_auto_fallback_to_local 开 + 用户已配 BYOK qwen/openai key
+            // → 给一条 actionable Notice 引导切引擎。Win 没有本地 Whisper，所以不能像
+            // Mac 静默自动 swap；只能软提示。已有 BYOK key 的高级用户能 1 秒看懂。
+            if cfg_for_hint.cloud_auto_fallback_to_local
+                && cfg_for_hint.engine == "tititalk_cloud"
+                && !cfg_for_hint.api_key.trim().is_empty()
+            {
+                let _ = event_tx_clear.send(PipelineEvent::Notice {
+                    message: "云端 ASR 暂不可用 · 设置里切到「百炼 BYOK」可继续使用自带 key 直连".into(),
+                });
+            }
             return Err(e);
         }
     };

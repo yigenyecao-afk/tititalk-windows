@@ -92,6 +92,12 @@ pub async fn orchestrate_start(state: Arc<AppState>) {
     state.set_phase(PipelinePhase::Recording);
     state.emit(PipelineEvent::Sound { sound: "start".into() });
 
+    // (v0.8.3 P0-5) settings.mute_system_during_recording=true → 静音系统输出，
+    // 避免扬声器声音被麦克风采进去。orchestrate_stop 末尾对应 restore。
+    if state.config.read().mute_system_during_recording {
+        crate::system_audio_muter::mute();
+    }
+
     let stop_flag = Arc::new(Mutex::new(false));
     let (tx, rx) = oneshot::channel::<anyhow::Result<CapturedAudio>>();
     let stop_flag_thr = stop_flag.clone();
@@ -131,9 +137,45 @@ pub async fn orchestrate_start(state: Arc<AppState>) {
     });
 }
 
+/// (v0.8.3 P0-3) ESC 取消录音 —— 跟 stop 不同：丢弃 PCM、不转写、不插入。
+/// 也回收 system mute / cloud ws / streaming pcm tx 等所有副作用。
+pub async fn orchestrate_cancel(state: Arc<AppState>) {
+    let (rx, stream_handle) = {
+        let mut active = ACTIVE.lock();
+        let Some(handle) = active.as_mut() else {
+            // idempotent —— 没活跃 session 时不报错，回到 idle
+            state.set_phase(PipelinePhase::Idle);
+            return;
+        };
+        *handle.stop_flag.lock() = true;
+        (handle.rx.take(), handle.stream.take())
+    };
+    // ws 流式断 —— 不发 stop event，直接 drop（服务端会自己 timeout 清 ticket）
+    if let Some(h) = stream_handle {
+        let _ = h.stop_tx.send(());
+    }
+    // capture 线程 join；丢弃 captured（不转写）
+    if let Some(rx) = rx {
+        let _ = rx.await;
+    }
+    *STREAMING_PCM_TX.lock() = None;
+    *ACTIVE.lock() = None;
+    if state.config.read().mute_system_during_recording {
+        crate::system_audio_muter::restore();
+    }
+    state.set_phase(PipelinePhase::Idle);
+    state.emit(PipelineEvent::Notice { message: "已取消".into() });
+}
+
 pub async fn orchestrate_stop(state: Arc<AppState>) {
     state.set_phase(PipelinePhase::Stopping);
     state.emit(PipelineEvent::Sound { sound: "stop".into() });
+
+    // (v0.8.3 P0-5) 配对 mute() —— mute_system_during_recording 开启时恢复系统
+    // 输出。用 saturating depth 嵌套保护，多次 stop 只有最外层真写。
+    if state.config.read().mute_system_during_recording {
+        crate::system_audio_muter::restore();
+    }
 
     // 拿出 capture rx + 流式 handle（如果有）；ACTIVE 即时清掉
     let (rx, stream_handle) = {
@@ -281,10 +323,18 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
         raw.clone()
     };
 
+    // (v0.8.3 P0-2) 客户端最后一道排版清洁：CJK ↔ Latin 边界自动加空格。
+    // polish 后端模型偶尔忘加（v0.8.3 后已写进 system prompt，但旧请求/网络重试
+    // 路径仍可能漏），verbatim 模式更必需。
+    let text = crate::text_post_process::normalize(&text, cfg.cjk_auto_space);
+
     state.emit(PipelineEvent::Transcript { text: text.clone() });
 
     if cfg.auto_insert {
         state.set_phase(PipelinePhase::Inserting);
+        // (v0.8.3 P0-4) also_copy=true 时：除了插入光标也复制到剪贴板，跟 Mac
+        // autoCopyToClipboard 同源。注意 cfg.also_copy 旧字段已存在（v0.7 用），
+        // 旧用户 false → 新行为不变。
         match insertion::insert_text(&text, cfg.also_copy) {
             Ok(()) => {
                 state.set_phase(PipelinePhase::Done);

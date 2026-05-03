@@ -252,6 +252,93 @@ export default function SettingsSheet({
           </TypelessCard>
         </section>
 
+        {/* (v0.8.3) 体验增强 */}
+        <section>
+          <TypelessSectionHeader title="体验增强" subtitle="排版、取消、降噪等小开关" />
+          <TypelessCard>
+            <TypelessRow
+              icon="␣"
+              iconColor="#06B6D4"
+              title="中英文之间自动加空格"
+              subtitle="「打开 VSCode 看代码」自动补空格，更易读"
+              trailing={
+                <Switch
+                  checked={draft.cjk_auto_space}
+                  onChange={(v) => patch("cjk_auto_space", v)}
+                />
+              }
+            />
+            <TypelessRow
+              icon="⎋"
+              iconColor="#EF4444"
+              title="ESC 取消录音 / 转写"
+              subtitle="录音中或处理中按 ESC 立即丢弃，不计配额"
+              trailing={
+                <Switch
+                  checked={draft.esc_cancel}
+                  onChange={(v) => patch("esc_cancel", v)}
+                />
+              }
+            />
+            <TypelessRow
+              icon="🔇"
+              iconColor="#8B5CF6"
+              title="录音中静音系统输出"
+              subtitle="开会/听音乐时按住快捷键自动静音，松开恢复"
+              trailing={
+                <Switch
+                  checked={draft.mute_system_during_recording}
+                  onChange={(v) => patch("mute_system_during_recording", v)}
+                />
+              }
+            />
+            <TypelessRow
+              icon="🌐"
+              iconColor="#10B981"
+              title="云端不可用时引导切 BYOK"
+              subtitle="网络飘 / WS 超时 → Notice 提示切到自带 key 的引擎"
+              trailing={
+                <Switch
+                  checked={draft.cloud_auto_fallback_to_local}
+                  onChange={(v) => patch("cloud_auto_fallback_to_local", v)}
+                />
+              }
+            />
+          </TypelessCard>
+        </section>
+
+        {/* (v0.8.3 P1-3) 润色强度 */}
+        {draft.stylist_enabled && (
+          <section>
+            <TypelessSectionHeader title="润色强度" subtitle="只清理标点 vs 大刀阔斧改写" />
+            <TypelessCard>
+              <TypelessRow
+                icon="🎚"
+                iconColor="#6366F1"
+                title="强度档位"
+                subtitle={
+                  draft.polish_intensity === "light" ? "轻 · 只补标点 / 删口头禅" :
+                  draft.polish_intensity === "heavy" ? "重 · 改写为正式书面语，可能偏离原意" :
+                  "标准 · 当前默认行为"
+                }
+                trailing={
+                  <select
+                    value={draft.polish_intensity ?? "normal"}
+                    onChange={(e) =>
+                      patch("polish_intensity", e.target.value as "light" | "normal" | "heavy")
+                    }
+                    className="bg-ink-900 border border-ink-700 rounded px-2 py-1 text-sm"
+                  >
+                    <option value="light">轻</option>
+                    <option value="normal">标准</option>
+                    <option value="heavy">重</option>
+                  </select>
+                }
+              />
+            </TypelessCard>
+          </section>
+        )}
+
         {/* 提示音 */}
         <section>
           <TypelessSectionHeader title="提示音" subtitle="录音开始/结束的反馈" />

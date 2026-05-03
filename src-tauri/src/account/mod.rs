@@ -289,14 +289,19 @@ impl Account {
         text: &str,
         persona: &str,
         model: &str,
+        intensity: &str,
+        cjk_auto_space: bool,
     ) -> Result<CloudPolishResponse, ApiError> {
         #[derive(serde::Serialize)]
         struct Req<'a> {
             text: &'a str,
             persona: &'a str,
             model: &'a str,
+            // (v0.8.3 P1-3 / P0-2) 跟 Mac 同源透传给后端 polish service
+            intensity: &'a str,
+            cjk_auto_space: bool,
         }
-        let req = Req { text, persona, model };
+        let req = Req { text, persona, model, intensity, cjk_auto_space };
         // (v0.7.4 polish-fix) 30→35s。后端 polish service DEFAULT_TIMEOUT_SEC=25
         // 加 polish.py route 处理 + 网络往返，client 给 35s 让服务端的 25s 一定
         // 先到。原 30s 跟服务端 25s+往返几乎平，偶尔被 client 抢先 timeout。

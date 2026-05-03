@@ -20,6 +20,10 @@ export async function forceStart(): Promise<void> {
 export async function forceStop(): Promise<void> {
   await invoke("cmd_force_record_stop");
 }
+/// (v0.8.3 P0-3) ESC 取消：丢弃 PCM 不转写不插入不计配额。orchestrate_cancel 路径。
+export async function forceCancel(): Promise<void> {
+  await invoke("cmd_force_record_cancel");
+}
 
 export function onPipeline(cb: (ev: PipelineEvent) => void): Promise<UnlistenFn> {
   return listen<PipelineEvent>("pipeline", (e) => cb(e.payload));

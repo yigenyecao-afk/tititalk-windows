@@ -140,7 +140,10 @@ async fn cloud_polish(
     }
     let persona = map_to_cloud_persona(&cfg.stylist_persona);
 
-    match account.cloud_polish(text, persona, &model).await {
+    match account
+        .cloud_polish(text, persona, &model, &cfg.polish_intensity, cfg.cjk_auto_space)
+        .await
+    {
         Ok(resp) => {
             // (v0.7.8) over_limit race —— 后端调 LLM 时被其他请求消完 quota，
             // 本次结果给了但下次必 429。提前给用户软提示 + 强 reload quota，
