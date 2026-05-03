@@ -151,10 +151,11 @@ pub async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Re
                 pcm = pcm_rx.recv() => {
                     match pcm {
                         Some(bytes) => {
-                            if stop_sent {
-                                // 已 stop 不再发 PCM
-                                continue;
-                            }
+                            // (v0.7.8) 即便 stop_sent，pcm_rx 里仍可能有 buffered PCM
+                            // 没发出去（capture flush 跟 stop_tx.send 之间有几 ms gap）。
+                            // 旧版 `if stop_sent { continue }` 把它们全丢了 →
+                            // 服务端看到 bytes=0 reason=4004。改成「无论 stop_sent 都发」，
+                            // 服务端 ASR provider 容忍 stop 后再来 PCM（按到达顺序处理）。
                             if let Err(e) = ws_sink.send(Message::Binary(bytes)).await {
                                 log::warn!("tititalk-cloud ws send pcm failed: {e}");
                                 error_msg = Some(format!("ASR 推流失败：{e}"));
@@ -170,8 +171,17 @@ pub async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Re
                         }
                     }
                 }
-                // 用户停 → 发 stop 事件，等服务端 final
+                // 用户停 → 先 drain pcm_rx 的 buffered 帧再发 stop 事件，等服务端 final。
+                // (v0.7.8) 不 drain 直接发 stop 会有 race：select! pcm 路径还没拿到
+                // 最后几个 chunk，stop 已发到服务端 → 服务端按 stop 立刻关 →
+                // bytes=0 reason=4004。
                 _ = &mut stop_rx, if !stop_sent => {
+                    while let Ok(bytes) = pcm_rx.try_recv() {
+                        if let Err(e) = ws_sink.send(Message::Binary(bytes)).await {
+                            log::warn!("tititalk-cloud ws drain pcm before stop failed: {e}");
+                            break;
+                        }
+                    }
                     if let Err(e) = ws_sink.send(Message::Text(r#"{"event":"stop"}"#.into())).await {
                         log::warn!("tititalk-cloud ws send stop failed: {e}");
                         error_msg = Some(format!("ASR 结束信号失败：{e}"));
@@ -236,8 +246,29 @@ pub async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Re
                         }
                         Message::Binary(_) => {}
                         Message::Close(frame) => {
-                            let info = frame.map(|f| format!("{} {}", f.code, f.reason)).unwrap_or_default();
-                            log::info!("tititalk-cloud ws closed: {info}");
+                            // (v0.7.8) 把服务端 4001-4006 关闭码映射成人话给 UI
+                            // —— 旧版只 log，用户看到「ASR 失败」却不知是配额/超时/重连
+                            let mapped = frame.as_ref().and_then(|f| {
+                                let code: u16 = f.code.into();
+                                match code {
+                                    4001 => Some("登录已失效，请到「设置 → 账号」重新登录".to_string()),
+                                    4002 => Some("今日云端配额已用完 — 重置时间在明天 0 点（北京）".to_string()),
+                                    4003 => Some("检测到另一台设备正在录音 — 请关闭后再试".to_string()),
+                                    4004 => Some("ASR 超时（5 分钟单段上限或长时间静音）— 已停止".to_string()),
+                                    4005 => Some("ASR 服务暂时不可用，请稍后重试（百炼后端波动）".to_string()),
+                                    4006 => Some("录音超过 5 分钟单段上限 — 自动停止".to_string()),
+                                    _ => None,
+                                }
+                            });
+                            if let Some(msg) = mapped {
+                                log::warn!("tititalk-cloud ws closed with mapped code: {msg}");
+                                if final_text.is_none() && error_msg.is_none() {
+                                    error_msg = Some(msg);
+                                }
+                            } else {
+                                let info = frame.map(|f| format!("{} {}", f.code, f.reason)).unwrap_or_default();
+                                log::info!("tititalk-cloud ws closed: {info}");
+                            }
                             break;
                         }
                         _ => {}

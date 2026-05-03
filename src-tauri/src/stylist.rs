@@ -141,7 +141,22 @@ async fn cloud_polish(
     let persona = map_to_cloud_persona(&cfg.stylist_persona);
 
     match account.cloud_polish(text, persona, &model).await {
-        Ok(resp) => Ok(strip_wrapper(&resp.polished)),
+        Ok(resp) => {
+            // (v0.7.8) over_limit race —— 后端调 LLM 时被其他请求消完 quota，
+            // 本次结果给了但下次必 429。提前给用户软提示 + 强 reload quota，
+            // 避免他们按完一次没事再按一次「莫名其妙不行了」。
+            if resp.over_limit {
+                log::info!("cloud-polish: over_limit flag set — issuing soft warn + reload");
+                state.emit(crate::state::PipelineEvent::Notice {
+                    message: "今日云端额度已贴顶，下次将被挡 — 明天 0 点（北京）重置".into(),
+                });
+                let acc2 = account.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = acc2.reload_me().await;
+                });
+            }
+            Ok(strip_wrapper(&resp.polished))
+        }
         Err(e) => {
             // 翻译几种典型错为中文，UI 兜底用得上。其它走 friendly_message。
             let status = e.status();

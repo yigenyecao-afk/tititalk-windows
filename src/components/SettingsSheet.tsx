@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { saveConfig, testAsr, VK_CHOICES } from "../lib/api";
+import { testAsr, VK_CHOICES } from "../lib/api";
 import type { AppConfig } from "../lib/types";
 import TypelessSheet from "./TypelessSheet";
 import {
@@ -41,8 +41,9 @@ export default function SettingsSheet({
   async function persist() {
     setSaving(true);
     try {
+      // (v0.7.8) 只调 onSave —— App.tsx 的 onSave 内已 saveConfig，旧版双写
+      // race 偶尔导致 backend cfg ≠ frontend draft，「设置改了不生效」根因。
       await onSave(draft);
-      await saveConfig(draft);
       setTestResult("已保存");
     } catch (e) {
       setTestResult("保存失败：" + String(e));

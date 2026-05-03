@@ -85,13 +85,21 @@ fn default_lang() -> String { "auto".into() }
 // 就以为坏了。CapsLock 行为我们在 LL hook 里反 toggle 过（按下就 swallow 不
 // 让 IME 切大写），但这里仅作默认值；用户可在「设置」改回 F1。
 fn default_hotkey() -> u32 { 0x14 }
-fn default_min_hold_ms() -> u32 { 150 }
+// (v0.7.8) 60ms — 真正的「轻按一下」就能识别成 PTT；旧值 150ms 太大，用户
+// 短按 CapsLock 常 80-130ms，timer 还没 fire 已被 KEYUP 清 pressed_at →
+// 完全没反应（v0.7.7 用户报「快捷键唤醒不了」根因之一）。
+fn default_min_hold_ms() -> u32 { 60 }
 fn default_persona() -> String { "friendly".into() }
 // qwen-turbo 4 月已 deprecated（百炼公告点 qwen-flash 为 drop-in 替代），
 // 跟 mac AppDefaults.polishModel="qwen-flash" 对齐。
 fn default_stylist_model() -> String { "qwen-flash".into() }
-fn default_hotkey_mode() -> String { "push_to_talk".into() }
-fn default_hybrid_threshold_ms() -> u32 { 500 }
+// (v0.7.8) 默认 hybrid 而不是 push_to_talk —— 小白第一次按快捷键 99% 是
+// 短按一下，PTT 模式下短按 = 不响应（无论 min_hold 多小），体感「坏了」。
+// hybrid：tap 当 toggle（按一下开/再按一下停），hold 当 PTT，两路兜底。
+fn default_hotkey_mode() -> String { "hybrid".into() }
+// (v0.7.8) 250ms 阈值 —— 介于「快速点击 100-150ms」跟「故意长按 400ms+」
+// 之间的合理切分点；500ms 太长，用户长按 0.4s 想 PTT 反而被当 toggle 双触发。
+fn default_hybrid_threshold_ms() -> u32 { 250 }
 fn default_sound_volume() -> f32 { 0.4 }
 fn default_history_retention_days() -> u32 { 30 }
 fn yes() -> bool { true }

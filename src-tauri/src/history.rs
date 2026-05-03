@@ -69,7 +69,7 @@ pub fn load_recent(limit: usize) -> Vec<HistoryItem> {
     };
     let mut items: Vec<HistoryItem> = BufReader::new(f)
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
         .filter_map(|l| {
             if l.trim().is_empty() {
                 None
@@ -97,7 +97,7 @@ pub fn cleanup(retention_days: u32) {
     let cutoff = Utc::now() - chrono::Duration::days(retention_days as i64);
     let kept: Vec<String> = BufReader::new(f)
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
         .filter(|l| {
             if l.trim().is_empty() {
                 return false;

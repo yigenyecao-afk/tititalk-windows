@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getAccountState, onAccountState, type AccountSnapshot } from "../lib/account";
+import { getAccountState, onAccountState, reloadMe, type AccountSnapshot } from "../lib/account";
 
 /// 历史 tab 顶部的云端 quota 横条 —— 跟 Mac HistoryQuotaBanner 同款。
 /// 显示今日 used/limit + ProgressView + 手动刷新。数据从 AccountSnapshot
@@ -10,14 +10,27 @@ import { getAccountState, onAccountState, type AccountSnapshot } from "../lib/ac
 /// snapshot 触发后端 /api/me 透传。
 export default function HistoryQuotaBanner() {
   const [account, setAccount] = useState<AccountSnapshot | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     getAccountState().then(setAccount).catch(() => {});
     const un = onAccountState(setAccount);
+    // (v0.7.8) 挂载时主动 reload，跟 Mac HistoryQuotaBanner.onAppear 对齐 ——
+    // 用户切到历史 tab 立刻看到最新 quota，不依赖被动事件推送。
+    reloadMe().catch(() => {});
     return () => {
       un.then((fn) => fn());
     };
   }, []);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await reloadMe();
+    } finally {
+      window.setTimeout(() => setRefreshing(false), 400);
+    }
+  }
 
   if (!account) {
     return (
@@ -62,6 +75,15 @@ export default function HistoryQuotaBanner() {
         </span>
         <span className="text-ink-400">·</span>
         <span className="text-ink-500 uppercase tracking-wide">{planRaw}</span>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="ml-auto text-ink-400 hover:text-ink-700 disabled:opacity-40"
+          title="刷新云端配额"
+        >
+          <span className={refreshing ? "inline-block animate-spin" : "inline-block"}>↻</span>
+        </button>
       </div>
     );
   }
@@ -75,6 +97,15 @@ export default function HistoryQuotaBanner() {
       </span>
       <span className="text-ink-400">·</span>
       <span className="text-ink-500 uppercase tracking-wide">{planRaw}</span>
+      <button
+        type="button"
+        onClick={handleRefresh}
+        disabled={refreshing}
+        className="ml-auto text-ink-400 hover:text-ink-700 disabled:opacity-40"
+        title="刷新云端配额"
+      >
+        <span className={refreshing ? "inline-block animate-spin" : "inline-block"}>↻</span>
+      </button>
     </div>
   );
 }

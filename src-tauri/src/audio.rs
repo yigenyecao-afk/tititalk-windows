@@ -145,32 +145,36 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     let (rx, stream_handle) = {
         let mut active = ACTIVE.lock();
         let Some(handle) = active.as_mut() else {
-            state.set_phase(PipelinePhase::Failed);
-            state.emit(PipelineEvent::Error {
-                message: "no active recording".into(),
-            });
+            // (v0.7.8) idempotent —— 双 stop 调（hotkey 重入残留 / Tauri cmd
+            // 跟 hotkey 同时触发）不再红 banner「no active recording」，回到 Idle。
+            log::debug!("orchestrate_stop called with no ACTIVE — already stopped");
+            state.set_phase(PipelinePhase::Idle);
             return;
         };
         *handle.stop_flag.lock() = true;
         (handle.rx.take(), handle.stream.take())
     };
-    // 清掉全局 PCM 出口（capture 线程关流后不再喂；后续 process_chunk 不会
-    // 再 send 到一个已 close 的 channel）
-    *STREAMING_PCM_TX.lock() = None;
+    // (v0.7.8) ⚠️ STREAMING_PCM_TX 不能在这里清 —— capture 线程刚收到 stop_flag，
+    // 还要把残留 PCM flush 出来。提前清会让残留帧 send 到 None channel 被丢弃，
+    // 服务端看到 bytes=0 reason=4004。改成「rx.await 拿到 captured 后再清」，
+    // 那时 capture 线程已经 100% 退出，channel 不再有写者。
 
     let Some(rx) = rx else {
+        *STREAMING_PCM_TX.lock() = None;
         return;
     };
 
     let captured = match rx.await {
         Ok(Ok(audio)) => audio,
         Ok(Err(e)) => {
+            *STREAMING_PCM_TX.lock() = None;
             *ACTIVE.lock() = None;
             state.set_phase(PipelinePhase::Failed);
             state.emit(PipelineEvent::Error { message: e.to_string() });
             return;
         }
         Err(_) => {
+            *STREAMING_PCM_TX.lock() = None;
             *ACTIVE.lock() = None;
             state.set_phase(PipelinePhase::Failed);
             state.emit(PipelineEvent::Error {
@@ -179,6 +183,8 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
             return;
         }
     };
+    // (v0.7.8) capture 100% 退出，现在清 STREAMING_PCM_TX 安全
+    *STREAMING_PCM_TX.lock() = None;
     *ACTIVE.lock() = None;
 
     *state.current_audio.write() = Some(captured.clone());
@@ -508,6 +514,14 @@ fn decimate_to_target(mono: &[f32], src_sr: u32) -> Vec<f32> {
         let avg: f32 = mono[idx..idx + win].iter().sum::<f32>() / win as f32;
         out.push(avg);
         idx += win;
+    }
+    // (v0.7.8) 残余样本兜底 —— 旧版 while 退出时 mono[idx..] 直接丢，
+    // 短音频（<100ms）尾部被截，dashscope 收到比预期短的字节流时
+    // 会判 NO_VALID_AUDIO_ERROR。补上残余 box-car 平均，最后一帧留住。
+    if idx < mono.len() {
+        let tail = &mono[idx..];
+        let avg: f32 = tail.iter().sum::<f32>() / tail.len() as f32;
+        out.push(avg);
     }
     out
 }

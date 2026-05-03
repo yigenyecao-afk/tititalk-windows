@@ -752,7 +752,12 @@ function HomePane({
     return () => {
       cancelled = true;
     };
-  }, [phase === "idle"]);
+    // (v0.7.8) 旧版 [phase === "idle"] 是 boolean —— React diff 后只在
+    // true↔false 翻转时 re-run。phase=recording→transcribing→done→idle 一圈
+    // 后 boolean 仍是 true→false→false→true，但 stale recheck 只在「回到 idle」
+    // 那一拍触发。改 [phase] 让每次 phase 变化都 recheck，麦克风插拔 / 设备
+    // 占用变化能更早被发现。
+  }, [phase]);
   const hotkeyLabel = useMemo(
     () => VK_CHOICES.find((c) => c.vk === cfg.hotkey_vk)?.label ?? "F1",
     [cfg.hotkey_vk],
@@ -860,6 +865,11 @@ function HomePane({
       <PushToTalkButton
         phase={phase}
         disabled={!!needsLogin || !!needsKey || !!(micCheck && !micCheck.ok)}
+        disabledReason={
+          micCheck && !micCheck.ok ? "需要先开启麦克风权限" :
+          needsLogin ? "需要先登录 TiTiTalk 账号" :
+          needsKey ? "需要先填 BYOK API key" : undefined
+        }
         hotkeyLabel={hotkeyLabel}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
@@ -882,10 +892,11 @@ function HomePane({
 }
 
 function PushToTalkButton({
-  phase, disabled, hotkeyLabel, onMouseDown, onMouseUp, onMouseLeave,
+  phase, disabled, disabledReason, hotkeyLabel, onMouseDown, onMouseUp, onMouseLeave,
 }: {
   phase: PipelinePhase;
   disabled: boolean;
+  disabledReason?: string;
   hotkeyLabel: string;
   onMouseDown: () => void;
   onMouseUp: () => void;
@@ -906,7 +917,12 @@ function PushToTalkButton({
 
   let label: string;
   let sub: string;
-  if (disabled) { label = "需要先解决上面的提示"; sub = ""; }
+  if (disabled) {
+    // (v0.7.8) 旧版统一「需要先解决上面的提示」对小白模糊；按 caller 优先级
+    // 传具体原因，按钮直接告诉用户「为啥点不了」。
+    label = disabledReason ?? "暂时无法录音";
+    sub = "请处理上方红色提示后再试";
+  }
   else if (phase === "recording") { label = "听着… 松开转写"; sub = "麦克风录音中"; }
   else if (phase === "stopping") { label = "处理中…"; sub = "停止录音"; }
   else if (phase === "transcribing") { label = "正在转写…"; sub = "上传到云端 ASR"; }

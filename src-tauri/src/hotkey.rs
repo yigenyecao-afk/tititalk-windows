@@ -43,12 +43,16 @@ pub fn spawn_hook_thread(state: Arc<AppState>) {
             pressed_at: parking_lot::Mutex::new(None),
             armed: parking_lot::Mutex::new(false),
         });
-        let _ = HOOK_CTX.set(ctx);
-
-        std::thread::Builder::new()
+        // (v0.7.8) 先 spawn 线程；HOOK_CTX 在 hook 装上后再 set，避免装 hook
+        // 失败留个指向死信的 ctx。
+        let ctx_for_thread = ctx.clone();
+        match std::thread::Builder::new()
             .name("tititalk-hotkey".into())
-            .spawn(|| run_hook_loop())
-            .expect("spawn hook thread");
+            .spawn(move || run_hook_loop(ctx_for_thread))
+        {
+            Ok(_) => log::info!("hotkey hook thread spawned"),
+            Err(e) => log::error!("FATAL: spawn hotkey hook thread failed: {e} — 快捷键将完全不可用"),
+        }
     }
     #[cfg(not(windows))]
     {
@@ -57,7 +61,7 @@ pub fn spawn_hook_thread(state: Arc<AppState>) {
 }
 
 #[cfg(windows)]
-fn run_hook_loop() {
+fn run_hook_loop(ctx: Arc<HookContext>) {
     use windows::Win32::Foundation::HINSTANCE;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -70,10 +74,12 @@ fn run_hook_loop() {
         let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_kb_proc), h_instance, 0) {
             Ok(h) => h,
             Err(e) => {
-                log::error!("SetWindowsHookExW failed: {e}");
+                log::error!("FATAL: SetWindowsHookExW failed: {e} — 快捷键将完全不可用，可能是 UAC/AV 拦截，提醒用户用「以管理员身份运行」试试");
                 return;
             }
         };
+        // (v0.7.8) hook 装好之后再 set HOOK_CTX —— 失败时不留指向死信的 ctx
+        let _ = HOOK_CTX.set(ctx);
         log::info!("keyboard LL hook installed");
 
         let mut msg = MSG::default();
@@ -164,7 +170,7 @@ unsafe fn handle_target_key(
                         // 长按超阈值 → 进入 PTT 模式（armed=true），
                         // 否则 KEYUP 时按 tap 处理（toggle 翻转）。
                         let ctx2 = ctx.clone();
-                        std::thread::Builder::new()
+                        if let Err(e) = std::thread::Builder::new()
                             .name("tititalk-hybrid-gate".into())
                             .spawn(move || {
                                 std::thread::sleep(Duration::from_millis(hybrid_threshold as u64));
@@ -174,12 +180,14 @@ unsafe fn handle_target_key(
                                     ctx2.state.request_phase(PipelinePhase::Recording);
                                 }
                             })
-                            .ok();
+                        {
+                            log::error!("hybrid gate thread spawn failed: {e}");
+                        }
                     }
                     _ => {
                         // push_to_talk（默认）
                         let ctx2 = ctx.clone();
-                        std::thread::Builder::new()
+                        if let Err(e) = std::thread::Builder::new()
                             .name("tititalk-hold-gate".into())
                             .spawn(move || {
                                 std::thread::sleep(Duration::from_millis(min_hold as u64));
@@ -189,7 +197,9 @@ unsafe fn handle_target_key(
                                     ctx2.state.request_phase(PipelinePhase::Recording);
                                 }
                             })
-                            .ok();
+                        {
+                            log::error!("hold gate thread spawn failed: {e}");
+                        }
                     }
                 }
             }
@@ -224,11 +234,31 @@ unsafe fn handle_target_key(
                     }
                 }
                 _ => {
-                    // push_to_talk（默认）
+                    // push_to_talk
                     if was_armed {
                         ctx.state.request_phase(PipelinePhase::Stopping);
                     } else if let Some(t0) = was_held {
-                        log::debug!("hotkey tap ignored ({:?} < min_hold)", t0.elapsed());
+                        let elapsed = t0.elapsed().as_millis();
+                        if elapsed >= min_hold {
+                            // (v0.7.8 race-comp) timer 还没 fire 就被 KEYUP 抢先 →
+                            // pressed_at 被清，timer 看到 still_held=false 不开。但
+                            // elapsed >= min_hold 说明用户真按了「够久」，此时 fire
+                            // 一次 toggle (start)，让用户再按一次自然停。比「无反应」
+                            // 体感好得多 — Mac 端 NSEvent monitor 没这个 race。
+                            log::info!(
+                                "hotkey PTT race compensated: elapsed={}ms ≥ min_hold={}ms — firing toggle Recording",
+                                elapsed, min_hold
+                            );
+                            let s = ctx.state.clone();
+                            match s.current_phase() {
+                                PipelinePhase::Recording => {
+                                    s.request_phase(PipelinePhase::Stopping)
+                                }
+                                _ => s.request_phase(PipelinePhase::Recording),
+                            }
+                        } else {
+                            log::debug!("hotkey tap ignored ({}ms < min_hold {}ms)", elapsed, min_hold);
+                        }
                     }
                 }
             }

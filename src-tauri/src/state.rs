@@ -76,7 +76,15 @@ impl AppState {
     }
 
     pub fn set_phase(&self, phase: PipelinePhase) {
-        *self.phase.write() = phase;
+        // (v0.7.8) 去重 —— 同一 phase 重复 set 不再 emit Event。本来 hotkey 重入
+        // 守卫在 request_phase 同步预设 Recording 后，orchestrate_start 内部还会
+        // 再 set 一次 Recording → 双 Phase event 让 React Pill 闪两下。
+        let mut p = self.phase.write();
+        if *p == phase {
+            return;
+        }
+        *p = phase;
+        drop(p);
         self.emit(PipelineEvent::Phase { phase });
     }
 
@@ -130,12 +138,21 @@ impl AppState {
                         return;
                     }
                 }
+                // (v0.7.8) 同步把 phase 推到 Recording —— 防 hotkey 快速重入。
+                // orchestrate_start 异步起 ASR session 可能 1-2s 才回，期间用户
+                // 又按了一次快捷键 → current_phase() 还是 Idle → spawn 第二次
+                // orchestrate_start → 双 WS 连接（服务端日志看到的 122.224.127.27
+                // 同一时刻 21:05:11/21:05:19 双 ASR session 就这么来的）。
+                // 同步抢占 phase 后第二次重入会落到 _ => 分支 ignore。
+                self.set_phase(PipelinePhase::Recording);
                 let s = self.clone();
                 tauri::async_runtime::spawn(async move {
                     crate::audio::orchestrate_start(s).await;
                 });
             }
             (PipelinePhase::Recording, PipelinePhase::Stopping) => {
+                // (v0.7.8) 同样同步抢占 → 防双 stop 调用
+                self.set_phase(PipelinePhase::Stopping);
                 let s = self.clone();
                 tauri::async_runtime::spawn(async move {
                     crate::audio::orchestrate_stop(s).await;
@@ -152,14 +169,24 @@ impl AppState {
     }
 
     /// True iff Account is wired AND the user is currently authenticated
-    /// (not in `.unauthenticated` / `.authenticating` / `.error`). Allows
-    /// hotkey + force-record commands to fail fast with a friendly notice
-    /// instead of triggering a doomed pipeline run.
+    /// AND has a usable access token. Allows hotkey + force-record commands
+    /// to fail fast with a friendly notice instead of triggering a doomed
+    /// pipeline run.
+    /// (v0.7.8) state 是 Authenticated 但 access_token 为 None 的情况：
+    /// bootstrap 拿到 user info 但 refresh 失败/超时 — 此时录音必然 401。
     fn account_ready_for_record(&self) -> bool {
         let acc = self.account.read().clone();
         let Some(acc) = acc else { return false };
         let snap = acc.snapshot();
-        matches!(snap.state, crate::account::auth::AuthState::Authenticated { .. })
+        if !matches!(snap.state, crate::account::auth::AuthState::Authenticated { .. }) {
+            return false;
+        }
+        // 有 state 但没 token —— 录音必然 401，提前阻断
+        if acc.access_token().is_none() {
+            log::warn!("account state=Authenticated but access_token=None — blocking record");
+            return false;
+        }
+        true
     }
 
     /// 检查 tititalk_cloud 配额是否够录一段：

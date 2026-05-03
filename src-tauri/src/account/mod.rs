@@ -45,6 +45,12 @@ pub struct CloudPolishResponse {
     pub limit_tokens: i64,
     pub remaining_tokens: i64,
     pub provider: Option<String>,
+    /// (v0.7.8) 后端在「polish 跑完发现总用量 > limit」时设为 true ——
+    /// race 路径：polish 预检通过但 LLM 调用过程中其他请求把 quota 消完。
+    /// 客户端读到此 flag 应弹 toast「本次额度内最后一次，下一次会被挡」并
+    /// 立刻 reload quota，免得用户下次按快捷键才看到 429。
+    #[serde(default)]
+    pub over_limit: bool,
 }
 
 /// Snapshot serialised to the frontend on `cmd_account_get_state`.
