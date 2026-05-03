@@ -170,9 +170,12 @@ export default function App() {
       <aside className="w-56 shrink-0 border-r border-ink-200 bg-white flex flex-col">
         {/* 品牌头：logo + 名字 + plan chip */}
         <div className="px-5 pt-5 pb-3 flex items-center gap-2">
-          <span className="text-base">
-            <span className="bg-gradient-to-br from-indigo-500 to-pink-500 bg-clip-text text-transparent font-extrabold">●</span>
-          </span>
+          <img
+            src="/logo-mark.png"
+            alt="TiTiTalk"
+            className="w-6 h-6 rounded-md"
+            draggable={false}
+          />
           <span className="text-base font-bold text-ink-900">TiTiTalk</span>
           <span className="ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-ink-100 text-ink-500">
             {planChip(account)}
@@ -645,6 +648,87 @@ function WelcomeGate({ account, version }: { account: AccountSnapshot | null; ve
   );
 }
 
+function HomeQuotaCard({
+  account,
+  onUpgrade,
+}: {
+  account: AccountSnapshot | null;
+  onUpgrade: () => void;
+}) {
+  const plan = ((account?.license?.plan ?? "free") + "").toLowerCase();
+  const isFlagship = plan.includes("flagship");
+  const isPro = plan.includes("pro") && !isFlagship;
+  const planLabel = isFlagship ? "旗舰版" : isPro ? "Pro 版" : "免费版";
+  const planColor = isFlagship ? "#EC4899" : isPro ? "#6366F1" : "#94A3B8";
+
+  const q = account?.quota ?? null;
+  const limit = q?.limit_tokens ?? null;
+  const remaining = q?.remaining_tokens ?? null;
+  const used =
+    q?.used_tokens ?? (limit != null && remaining != null ? Math.max(0, limit - remaining) : null);
+  const pct = limit && limit > 0 && used != null ? Math.min(1, Math.max(0, used / limit)) : 0;
+
+  const barColors =
+    pct >= 0.95
+      ? "from-red-500 to-rose-600"
+      : pct >= 0.8
+        ? "from-amber-500 to-orange-600"
+        : "from-indigo-500 to-pink-500";
+
+  return (
+    <div className="rounded-xl bg-white border border-ink-200/70 p-4 flex items-center gap-4">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-[13px] font-semibold text-ink-900">今日云端用量</span>
+          <span
+            className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+            style={{
+              backgroundColor: planColor + "26",
+              color: planColor,
+            }}
+          >
+            {planLabel}
+          </span>
+        </div>
+        {limit != null && used != null ? (
+          <>
+            <div className="flex items-center gap-2 mb-2 tabular-nums">
+              <span className="text-[12px] text-ink-500">
+                {used.toLocaleString()} / {limit.toLocaleString()} tokens
+              </span>
+              <span
+                className={
+                  "text-[11px] " +
+                  (pct >= 0.95 ? "text-red-600" : pct >= 0.8 ? "text-amber-600" : "text-ink-400")
+                }
+              >
+                ({Math.round(pct * 100)}%)
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-ink-100 overflow-hidden">
+              <div
+                className={"h-full bg-gradient-to-r " + barColors + " rounded-full transition-all"}
+                style={{ width: `${Math.max(2, pct * 100)}%` }}
+              />
+            </div>
+          </>
+        ) : (
+          <div className="text-[12px] text-ink-400">云端配额加载中…</div>
+        )}
+      </div>
+      {!isFlagship && (
+        <button
+          type="button"
+          onClick={onUpgrade}
+          className="shrink-0 px-3 py-1.5 rounded-full text-white text-[12px] font-medium bg-gradient-to-r from-indigo-500 to-pink-500 hover:opacity-90"
+        >
+          ✨ {isPro ? "升级旗舰" : "升级 Pro"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function HomePane({
   cfg, account, phase, lastError, onGoSettings, onGoAccount, onDismissError,
 }: {
@@ -722,6 +806,8 @@ function HomePane({
           微信、邮件、IDE、Notion 都能用。
         </p>
       </div>
+
+      <HomeQuotaCard account={account} onUpgrade={onGoAccount} />
 
       {/* Status / blocker banners — show ONE at a time, top→bottom priority.
           mic 权限放最高 —— 没麦克风后面什么都白搭；其次是登录；其次是 BYOK key；

@@ -31,7 +31,15 @@ export default function TypelessSheet({
         aria-modal="true"
       >
         <div className="flex items-center justify-between px-7 pt-6 pb-3">
-          <h1 className="text-2xl font-bold text-ink-900">{title}</h1>
+          <div className="flex items-center gap-3">
+            <img
+              src="/logo-mark.png"
+              alt="TiTiTalk"
+              className="w-8 h-8 rounded-lg"
+              draggable={false}
+            />
+            <h1 className="text-2xl font-bold text-ink-900">{title}</h1>
+          </div>
           <button
             type="button"
             onClick={onClose}

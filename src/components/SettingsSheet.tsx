@@ -60,6 +60,7 @@ export default function SettingsSheet({
           <TypelessCard>
             <TypelessRow
               icon="✦"
+              iconColor="#6366F1"
               title="ASR 引擎"
               subtitle="云端走 tititalk.com 代理；BYOK 直连需要专业解锁包"
               trailing={
@@ -78,6 +79,7 @@ export default function SettingsSheet({
             />
             <TypelessRow
               icon="🌐"
+              iconColor="#0EA5E9"
               title="语言"
               subtitle="自动模式适合中英混说"
               trailing={
@@ -114,6 +116,7 @@ export default function SettingsSheet({
           <TypelessCard>
             <TypelessRow
               icon="⌘"
+              iconColor="#10B981"
               title="录音热键"
               subtitle={
                 "当前：" +
@@ -137,6 +140,7 @@ export default function SettingsSheet({
             />
             <TypelessRow
               icon="✋"
+              iconColor="#F59E0B"
               title="触发方式"
               subtitle={hotkeyModeHint(draft.hotkey_mode)}
               trailing={
@@ -162,6 +166,7 @@ export default function SettingsSheet({
           <TypelessCard>
             <TypelessRow
               icon="✨"
+              iconColor="#8B5CF6"
               title="启用润色"
               subtitle="转写后再走一发 LLM 调通顺；失败自动用原文"
               trailing={
@@ -173,6 +178,7 @@ export default function SettingsSheet({
             />
             <TypelessRow
               icon="🎨"
+              iconColor="#EC4899"
               title="风格"
               subtitle="也可以说「正式一点」「邮件腔」临时切换"
               trailing={
@@ -202,6 +208,7 @@ export default function SettingsSheet({
           <TypelessCard>
             <TypelessRow
               icon="↵"
+              iconColor="#06B6D4"
               title="自动插入到光标"
               subtitle="关闭后只复制到剪贴板，不自动粘贴"
               trailing={
@@ -213,6 +220,7 @@ export default function SettingsSheet({
             />
             <TypelessRow
               icon="📋"
+              iconColor="#64748B"
               title="同时复制到剪贴板"
               subtitle="自动插入失败时仍能 Ctrl+V 粘贴"
               trailing={
@@ -231,6 +239,7 @@ export default function SettingsSheet({
           <TypelessCard>
             <TypelessRow
               icon="🔔"
+              iconColor="#F59E0B"
               title="启用提示音"
               subtitle="开始/结束录音时播放短音提示"
               trailing={
@@ -243,6 +252,7 @@ export default function SettingsSheet({
             {draft.sound_feedback_enabled && (
               <TypelessRow
                 icon="🔊"
+                iconColor="#F59E0B"
                 title="音量"
                 subtitle={`${Math.round(draft.sound_feedback_volume * 100)}%`}
                 trailing={
