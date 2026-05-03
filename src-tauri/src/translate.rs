@@ -223,7 +223,7 @@ fn send_ctrl_letter(vk: u16) -> Result<()> {
 
 #[cfg(windows)]
 fn read_clipboard_text() -> Result<String> {
-    use windows::Win32::Foundation::{HANDLE, HWND};
+    use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, GetClipboardData, OpenClipboard,
     };
@@ -237,7 +237,12 @@ fn read_clipboard_text() -> Result<String> {
                 let _ = CloseClipboard();
                 anyhow!("GetClipboardData: {e}")
             })?;
-        let ptr = GlobalLock(std::mem::transmute(h.0));
+        // (v0.8.6 GHA-fix) HANDLE / HGLOBAL 都是 #[repr(transparent)] 的
+        // *mut c_void 包装；windows-0.58 收紧 P0: Param<HGLOBAL> 推断后
+        // transmute 不再够，必须显式 HGLOBAL(h.0) 才能让 GlobalLock/Unlock
+        // 选到正确 impl。Mac 端 cargo check 不查 cfg(windows) 块所以漏。
+        let hg = HGLOBAL(h.0);
+        let ptr = GlobalLock(hg);
         if ptr.is_null() {
             let _ = CloseClipboard();
             return Err(anyhow!("GlobalLock returned null"));
@@ -253,7 +258,7 @@ fn read_clipboard_text() -> Result<String> {
         }
         let slice = std::slice::from_raw_parts(p, len);
         let text = String::from_utf16_lossy(slice);
-        let _ = GlobalUnlock(std::mem::transmute(h.0));
+        let _ = GlobalUnlock(hg);
         let _ = CloseClipboard();
         Ok(text)
     }
