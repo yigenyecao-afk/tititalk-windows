@@ -97,27 +97,18 @@ pub async fn orchestrate_start(state: Arc<AppState>) {
     let stop_flag_thr = stop_flag.clone();
     let event_tx = state.event_tx.clone();
 
-    // (v0.7.6) tititalk_cloud 引擎：在 capture 线程跑之前先开 streaming WS
-    // session。失败 fallback 给 batch 路径（保留 _stream_handle = None）。
-    // capture 线程通过 STREAMING_PCM_TX 全局 channel 推 PCM。
+    // (HOTFIX 2026-05-03) start_session_async 立刻返回 handle，prepare（fetch
+    // ticket + WS 握手 + 等 ready）在后台 task 跑。caller 立刻 set
+    // STREAMING_PCM_TX 让 capture 线程开始往 channel 推 PCM —— 握手期间 PCM
+    // buffer 在 unbounded channel 里，ready 后主循环 first iteration drain。
+    // 旧路径 await start_session 让 capture 线程在 500-1500ms 握手期间根本没
+    // 起，用户开口的前 1-2 句直接进虚空。失败信号通过 final_rx 在 stop 时
+    // 暴露 → orchestrate_stop 检测到 final_rx Err 后回退 batch。
     let cfg_engine = state.config.read().engine.clone();
     let stream_handle = if cfg_engine == "tititalk_cloud" {
-        match crate::asr_stream::start_session(state.clone(), TARGET_SR).await {
-            Ok(h) => {
-                *STREAMING_PCM_TX.lock() = Some(h.pcm_tx.clone());
-                Some(h)
-            }
-            Err(e) => {
-                // 流式起不来 → fallback：batch 路径在 stop 时跑（跟旧版本一样）。
-                // 用 Notice 而不是 Error，避免吓到用户「录音失败」—— 文本仍然
-                // 会在停止时拿到。
-                log::warn!("ASR streaming start failed, fallback to batch: {e}");
-                state.emit(PipelineEvent::Notice {
-                    message: format!("ASR 流式不可用，已降级到批处理：{e}"),
-                });
-                None
-            }
-        }
+        let h = crate::asr_stream::start_session_async(state.clone(), TARGET_SR);
+        *STREAMING_PCM_TX.lock() = Some(h.pcm_tx.clone());
+        Some(h)
     } else {
         None
     };

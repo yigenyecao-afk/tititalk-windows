@@ -42,14 +42,54 @@ struct TicketResp {
     ws_url: String,
 }
 
-/// 起一个 WS streaming session。立即返回 handle；async 任务在后台跑：
-///   - 先 GET ticket
-///   - 连 WS 等 ready
-///   - 并行 spawn pcm_drain 任务把 caller 推进 pcm_tx 的字节转发到 WS
-///   - 主任务读 WS 事件，partial/sentence emit `Partial`，final 写 final_tx
-///
-/// `sample_rate` 必须是服务端支持的（8k/16k/22k/24k/44k/48k）。
-pub async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Result<StreamHandle> {
+/// 真正起 WS session：fetch ticket → connect → 等 ready → 进主循环。
+/// 所有步骤都在 spawn 的 task 里跑，prepare 失败用 final_tx.send(Err) 通知 caller。
+/// (HOTFIX 2026-05-03) 抽出来供 start_session_async 用 —— 让 caller 不用 await
+/// prepare 完成就能拿 handle，提前起 capture 线程，PCM 在握手期间 buffer 进
+/// pcm_rx unbounded channel，ready 后主循环 first iteration 立刻 drain。
+pub fn start_session_async(state: Arc<AppState>, sample_rate: u32) -> StreamHandle {
+    let (pcm_tx, pcm_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (stop_tx, stop_rx) = oneshot::channel::<()>();
+    let (final_tx, final_rx) = oneshot::channel::<anyhow::Result<String>>();
+
+    tauri::async_runtime::spawn(async move {
+        match prepare_and_run(state, sample_rate, pcm_rx, stop_rx).await {
+            Ok(text) => { let _ = final_tx.send(Ok(text)); }
+            Err(e) => {
+                log::warn!("tititalk-cloud streaming task failed: {e}");
+                let _ = final_tx.send(Err(e));
+            }
+        }
+    });
+
+    StreamHandle { stop_tx, final_rx, pcm_tx }
+}
+
+async fn prepare_and_run(
+    state: Arc<AppState>,
+    sample_rate: u32,
+    pcm_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    stop_rx: oneshot::Receiver<()>,
+) -> anyhow::Result<String> {
+    let session = start_session(state, sample_rate).await?;
+    session.run(pcm_rx, stop_rx).await
+}
+
+/// prepare 阶段的产物：握手好的 ws + event channel。run() 接 pcm_rx + stop_rx
+/// 跑主循环。把「握手」跟「主循环」拆开是为了让 caller 能在 prepare 期间已经
+/// 起 capture（pcm 进 unbounded channel buffer），ready 后 first iteration drain。
+struct StreamSession {
+    ws_sink: futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        Message,
+    >,
+    ws_stream: futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    >,
+    event_tx: tokio::sync::mpsc::UnboundedSender<PipelineEvent>,
+}
+
+async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Result<StreamSession> {
     // 1. 取 access token —— 没登录直接 fail
     let acc = state
         .account
@@ -118,21 +158,21 @@ pub async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Re
         }
     }
 
-    // 5. 起 handle —— 立刻返回 caller，后续在 spawn 出去的任务里跑
-    let (pcm_tx, mut pcm_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    let (stop_tx, stop_rx) = oneshot::channel::<()>();
-    let (final_tx, final_rx) = oneshot::channel::<anyhow::Result<String>>();
-
+    // (HOTFIX 2026-05-03) prepare 完成 → 把 ws/sink/stream 打包成 StreamSession 给
+    // caller。caller 在 prepare 期间已经把 capture 起来，PCM buffer 在 pcm_rx
+    // unbounded channel 里，session.run() 主循环 first iteration 立刻 drain。
     let event_tx = state.event_tx.clone();
+    Ok(StreamSession { ws_sink, ws_stream, event_tx })
+}
 
-    // 6. 主循环：并行 (a) drain pcm_rx → 推 binary  (b) 监听 stop_rx → 发 stop  (c) 读 ws 事件
-    //
-    // tokio_tungstenite 的 sink 不能在多任务共享，必须在一个 task 里串行。
-    // 用 select! 在同一任务里轮询三个 source：
-    //   - pcm_rx: 来 PCM → ws_sink.send(Binary)
-    //   - stop_rx: signal → ws_sink.send(Text "{event:stop}")，之后只读不写
-    //   - ws_stream: 来 server 事件 → emit / 收 final → 写 final_tx 退出
-    tauri::async_runtime::spawn(async move {
+impl StreamSession {
+    /// 主循环：select! 轮询三个 source：pcm_rx / stop_rx / ws_stream。
+    async fn run(
+        self,
+        mut pcm_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+        stop_rx: oneshot::Receiver<()>,
+    ) -> anyhow::Result<String> {
+        let StreamSession { mut ws_sink, mut ws_stream, event_tx } = self;
         let mut stop_rx = stop_rx;
         let mut stop_sent = false;
         let mut final_text: Option<String> = None;
@@ -281,17 +321,14 @@ pub async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Re
         let _ = ws_sink.send(Message::Close(None)).await;
 
         // final 优先；error 次之；都没就当 client 异常退
-        let result = if let Some(t) = final_text {
+        if let Some(t) = final_text {
             Ok(t)
         } else if let Some(e) = error_msg {
             Err(anyhow!(e))
         } else {
             Err(anyhow!("ASR 连接异常结束（无 final，无错）"))
-        };
-        let _ = final_tx.send(result);
-    });
-
-    Ok(StreamHandle { stop_tx, final_rx, pcm_tx })
+        }
+    }
 }
 
 async fn fetch_ticket(access: &str, sample_rate: u32) -> anyhow::Result<TicketResp> {
