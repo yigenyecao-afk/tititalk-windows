@@ -22,6 +22,27 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::state::{AppState, PipelineEvent};
 
+/// 简单的 URL query value percent-encode —— 把 unreserved 集（rfc 3986：
+/// ALPHA / DIGIT / `-` / `_` / `.` / `~`) 之外的字节都 %XX 编码。逗号在 query
+/// value 上下文里不需要特殊处理（服务端按 `,` split CSV），但保险起见也编码 —
+/// 服务端 urllib.parse 解出来一致。仅用于 vocabulary CSV，不依赖 url crate。
+fn pct_encode_query(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for byte in s.as_bytes() {
+        let c = *byte;
+        let unreserved = c.is_ascii_alphanumeric()
+            || c == b'-' || c == b'_' || c == b'.' || c == b'~'
+            || c == b','; // 留逗号当 CSV 分隔（服务端 split(",") 直接用）
+        if unreserved {
+            out.push(c as char);
+        } else {
+            out.push('%');
+            out.push_str(&format!("{c:02X}"));
+        }
+    }
+    out
+}
+
 /// caller 拿到这个 handle：用 `stop_tx.send(())` 通知 WS 任务发 stop 事件
 /// + 等服务端 final；用 `final_rx.await` 拿到最终文本。
 pub struct StreamHandle {
@@ -138,10 +159,27 @@ async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Result
         Err(e) => return Err(e),
     };
 
-    // 3. 连 WS（ticket 已在 ws_url query）
-    let (ws_stream, _resp) = tokio_tungstenite::connect_async(&ticket.ws_url)
+    // 3. 连 WS — 拼 vocabulary query（用户自定义热词 CSV）。
+    //    (v0.10 角色精准化 v2) 服务端跟 user.role 词包合并 + phonetic dedupe，
+    //    填到 paraformer phrase_list；修补之前 WS 路径漏接 user vocabulary 的设计缺陷。
+    let user_vocab: Vec<String> = {
+        let cfg = state.config.read();
+        cfg.dictionary
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
+    let final_ws_url = if user_vocab.is_empty() {
+        ticket.ws_url.clone()
+    } else {
+        let csv = user_vocab.join(",");
+        // ws_url 已含 ?ticket=...，追加用 &
+        format!("{}&vocabulary={}", ticket.ws_url, pct_encode_query(&csv))
+    };
+    let (ws_stream, _resp) = tokio_tungstenite::connect_async(&final_ws_url)
         .await
-        .with_context(|| format!("连 ASR WebSocket 失败：{}", ticket.ws_url))?;
+        .with_context(|| format!("连 ASR WebSocket 失败：{}", final_ws_url))?;
     let (mut ws_sink, mut ws_stream) = ws_stream.split();
 
     // 4. 等 ready 事件 —— 5s 上限，跟 Mac 对齐
