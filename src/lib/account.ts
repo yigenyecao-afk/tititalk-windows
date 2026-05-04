@@ -16,6 +16,11 @@ export interface User {
   /** ISO timestamp; non-null = ¥49 专业版解锁包已购，本地 + BYOK 路径全开。
    * 与 plan 完全独立。 */
   pro_unlocked_at: string | null;
+  /** (角色身份系统 v1) teacher/doctor/journalist/lawyer/engineer/
+   *  product_manager/sales/general。null = 未做 onboarding，App.tsx
+   *  会全屏显示 OnboardingRoleSheet 强制选（决策 #1）。 */
+  role: string | null;
+  role_chosen_at: string | null;
   created_at: string;
 }
 
@@ -184,6 +189,13 @@ export async function billingGetOrder(orderId: number): Promise<OrderInfo> {
 
 export async function openPayUrl(url: string): Promise<void> {
   await invoke("cmd_billing_open_url", { url });
+}
+
+/** (角色身份系统 v1) 提交所选角色。OnboardingRoleSheet + Settings RoleRow 都调。
+ *  内部 cmd_role_select 走 PUT /api/me/role + reload_me，成功后 account-state-changed
+ *  事件让 React 看到新 user.role，App.tsx 的 onboarding gate 自动让位主 UI。 */
+export async function selectRole(role: string): Promise<void> {
+  await invoke("cmd_role_select", { role });
 }
 
 export async function reloadMe(): Promise<void> {

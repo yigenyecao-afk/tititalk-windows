@@ -23,6 +23,7 @@ import {
 import ConflictDialog from "./components/ConflictDialog";
 import SettingsSheet from "./components/SettingsSheet";
 import AccountSheet from "./components/AccountSheet";
+import OnboardingRoleSheet from "./components/OnboardingRoleSheet";
 import HistoryQuotaBanner from "./components/HistoryQuotaBanner";
 import {
   getAccountState,
@@ -183,6 +184,22 @@ export default function App() {
         <UpdateBanner status={update} setStatus={setUpdate} />
         <ConflictDialog />
         <WelcomeGate account={account} version={version} />
+      </div>
+    );
+  }
+
+  // (角色身份系统 v1) authenticated 但 user.role 为 null —— 老用户没做过
+  // onboarding 或新注册。决策 #1 强制选不能跳过：全屏 hijack OnboardingRoleSheet
+  // 接管整个 UI，等 cmd_role_select 成功 → reload_me → 这里 user.role 不再是
+  // null → 自动切到主界面（无需手动 close）。
+  const authedUser =
+    account!.state.kind === "authenticated" ? account!.state.user : null;
+  if (authedUser && authedUser.role == null) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <UpdateBanner status={update} setStatus={setUpdate} />
+        <ConflictDialog />
+        <OnboardingRoleSheet />
       </div>
     );
   }

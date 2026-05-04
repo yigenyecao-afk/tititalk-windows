@@ -908,6 +908,22 @@ impl Account {
     /// 上限还在用旧 plan 计算，UI 看到「升级 Pro 但 quota 还是 18k」诡异
     /// 状态。这里把 license + quota 一并刷，三件套同步。失败 best-effort，
     /// 上层 reload_me 成功就算成功，license/quota 会被周期任务接管。
+    /// (角色身份系统 v1) 提交所选角色到 PUT /api/me/role。OnboardingRoleSheet
+    /// + Settings RoleRow 都调。成功后立即 reload_me 让 user.role 写到 state，
+    /// 触发 React 端 onboarding 切走（`user.role==null` 是判定条件）。
+    /// 决策 #7 客户端零信任：本端不保存 role-driven 词包/prefix，所有适配
+    /// 都在后端按 user.id 自动 lookup 注入。
+    pub async fn select_role(&self, role_id: &str) -> Result<(), String> {
+        #[derive(serde::Serialize)]
+        struct Req<'a> { role: &'a str }
+        #[derive(serde::Deserialize)]
+        struct Resp { #[allow(dead_code)] role: String, #[allow(dead_code)] role_chosen_at: Option<String> }
+        let _: Resp = self.api.put("/api/me/role", &Req { role: role_id }, &[]).await
+            .map_err(|e| e.friendly_message())?;
+        // 重拉 /api/me 让 React 端通过 cmd_account_get_state 看到 user.role 更新。
+        self.reload_me().await
+    }
+
     pub async fn reload_me(&self) -> Result<(), String> {
         match auth::fetch_me(&self.api).await {
             Ok(user) => {

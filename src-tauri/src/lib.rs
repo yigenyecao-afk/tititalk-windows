@@ -140,6 +140,7 @@ pub fn run() {
             cmd_billing_open_url,
             cmd_account_reload_me,
             cmd_account_reload_me_atomic,
+            cmd_role_select,
             cmd_history_recent,
             cmd_history_clear,
             cmd_open_mic_settings,
@@ -522,6 +523,20 @@ async fn cmd_account_reload_me(
 ) -> Result<(), String> {
     let acc = account_handle(&state)?;
     acc.reload_me().await
+}
+
+/// (角色身份系统 v1) 用户在 OnboardingRoleSheet 选完点确认 / Settings RoleRow
+/// 切角色时调。后端 `PUT /api/me/role` 写库后，内部 reload_me() 会触发
+/// `account-state-changed` 事件让 React 看到新 user.role 值。
+/// 决策 #7：role 不传 polish/asr API；只通过此命令写后端，热词 + prefix 由
+/// 后端按 user 自动注入。
+#[tauri::command]
+async fn cmd_role_select(
+    role: String,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let acc = account_handle(&state)?;
+    acc.select_role(&role).await
 }
 
 /// FIX-25: 单次原子拉 me + license + quota，frontend 在支付成功后调一次。

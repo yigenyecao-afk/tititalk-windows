@@ -15,6 +15,7 @@ import {
   openPayUrl,
   reloadMe,
   reloadMeAtomic,
+  selectRole,
   startLogin,
   unbindDevice,
   type AccountSnapshot,
@@ -27,6 +28,12 @@ import {
   type QuotaInfo,
   type User,
 } from "../lib/account";
+import {
+  fetchRoleCatalog,
+  findRole,
+  getCachedRoles,
+  type Role,
+} from "../lib/role-catalog";
 
 export default function AccountSection() {
   const [snap, setSnap] = useState<AccountSnapshot | null>(null);
@@ -280,6 +287,11 @@ function AuthenticatedView({
           )}
         </div>
       </div>
+
+      {/* (角色身份系统 v1) 决策 #3 「改一次进 Settings」唯一入口 ——
+          pill 上故意不加快捷切换。下拉切角色后立即调 cmd_role_select
+          → 后端写库 → reload_me → user.role 更新到 React state。 */}
+      <RoleRow user={user} />
 
       {license && <LicenseRow lic={license} />}
       {quota ? (
@@ -738,6 +750,65 @@ function LicenseRow({ lic }: { lic: LicenseInfo }) {
       {lic.expires_at && lic.plan !== "pro_lifetime" && (
         <> · 到期 {prettyDate(lic.expires_at)}</>
       )}
+    </div>
+  );
+}
+
+/// (角色身份系统 v1) Settings 里的角色行。catalog 进入时拉一次 + localStorage
+/// 7d cache 兜底。下拉选角色立即提交，成功 toast，失败 toast。
+function RoleRow({ user }: { user: User }) {
+  const [roles, setRoles] = useState<Role[]>(() => getCachedRoles());
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string>("");
+
+  useEffect(() => {
+    fetchRoleCatalog().then((list) => setRoles(list));
+  }, []);
+
+  const current = findRole(user.role, roles);
+  const label = current
+    ? `${current.emoji} ${current.title}`
+    : user.role
+    ? user.role
+    : "尚未选择";
+
+  async function pick(roleId: string) {
+    if (busy) return;
+    setBusy(true);
+    setFeedback("");
+    try {
+      await selectRole(roleId);
+      setFeedback("已更新");
+    } catch (e) {
+      setFeedback(`失败：${String(e)}`);
+    } finally {
+      setBusy(false);
+      setTimeout(() => setFeedback(""), 2500);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="text-ink-500">角色身份</span>
+      <span className="text-ink-700">{label}</span>
+      <div className="flex-1" />
+      {feedback && <span className="text-ink-400 text-[11px]">{feedback}</span>}
+      <select
+        className="text-xs px-2 py-1 rounded border border-ink-200 bg-white disabled:opacity-50"
+        value={user.role ?? ""}
+        disabled={busy || roles.length === 0}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v && v !== user.role) pick(v);
+        }}
+      >
+        {!user.role && <option value="">(请选择)</option>}
+        {roles.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.emoji} {r.title}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

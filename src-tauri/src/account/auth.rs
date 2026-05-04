@@ -48,6 +48,12 @@ pub struct User {
     /// None = 未解锁 → 本地 Whisper 禁用 + BYOK 端点 402；
     /// Some = 永久解锁，与 plan 完全独立加购。
     pub pro_unlocked_at: Option<String>,
+    /// (角色身份系统 v1) teacher / doctor / journalist / lawyer / engineer
+    /// / product_manager / sales / general。None = 老用户 / 新用户尚未做
+    /// onboarding，前端会用全屏 OnboardingRoleSheet 强制选一次（决策 #1）。
+    /// 客户端零信任：不传 role 给 polish/asr API（决策 #7 由后端 lookup）。
+    pub role: Option<String>,
+    pub role_chosen_at: Option<String>,
     pub created_at: String,
 }
 
