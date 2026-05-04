@@ -43,7 +43,7 @@ export default function App() {
   const [showAccount, setShowAccount] = useState(false);
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [recent, setRecent] = useState<{ at: string; text: string }[]>([]);
-  const [statusLine, setStatusLine] = useState<string>("准备中");
+  const [statusLine, setStatusLine] = useState<string>("待命中");
   const [phase, setPhase] = useState<PipelinePhase>("idle");
   const [lastError, setLastError] = useState<string>("");
   /// Transient soft toast — auto-clears after 3s. Used for graceful
@@ -321,6 +321,15 @@ export default function App() {
   );
 }
 
+function fmtUsageMinutesWin(tokens: number): string {
+  const secs = Math.max(0, Math.floor(tokens / 10));
+  if (secs < 60) return `${secs} 秒`;
+  if (secs < 3600) return `${Math.floor(secs / 60)} 分钟`;
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  return m === 0 ? `${h} 小时` : `${h} 小时 ${m} 分`;
+}
+
 function planChip(account: AccountSnapshot | null): string {
   const plan = (account?.license?.plan ?? "free").toLowerCase();
   if (plan.includes("flagship")) return "旗舰";
@@ -409,8 +418,8 @@ function detectUpgradeReason(msg: string): UpgradeReason | null {
 function UpgradeBanner({ reason, onDismiss }: { reason: UpgradeReason; onDismiss: () => void }) {
   const copy =
     reason === "quota_exceeded"
-      ? "今日云端 ASR 额度用完。可升级专业版解锁更多 token，或切到本地 / 自带 API key。"
-      : "此引擎需要专业解锁包（¥49 一次性）。本地 Whisper 与 BYOK 路径都解锁。";
+      ? "今日云端额度用完了。三个选择：① 升级 Pro / 旗舰；② 切到本地引擎（免费但慢一点）；③ 用自己的 API 密钥按你账户付费。"
+      : "这个引擎需要先一次性付费 ¥49 解锁专业版。本地引擎和自带 API 密钥都会跟着解锁。";
   const open = () => {
     // Tauri opener — fall back to window.open for dev mode.
     try {
@@ -607,7 +616,7 @@ function WelcomeGate({ account, version }: { account: AccountSnapshot | null; ve
             TiTiTalk
           </div>
           <div className="text-sm text-ink-500 mt-1">
-            按住快捷键说话 · 自动转写到光标处
+            按住快捷键说话 · 自动整理后插入到光标
           </div>
         </div>
 
@@ -615,8 +624,8 @@ function WelcomeGate({ account, version }: { account: AccountSnapshot | null; ve
           <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-5 py-4 text-sm text-indigo-900 space-y-2 text-left">
             <div className="font-medium">浏览器已打开，请完成登录…</div>
             <div className="text-xs text-indigo-700/80 leading-relaxed">
-              在网页确认绑定后会自动跳回客户端。
-              如果浏览器没自动唤起，回到这里再点一次「打开登录页」。
+              网页登录完成后会自动跳回。
+              如果浏览器没自动打开，点下方按钮重试。
             </div>
             <button
               className="mt-2 w-full px-4 py-2.5 rounded-md bg-white border border-indigo-200 text-indigo-700 text-sm font-medium hover:bg-indigo-100"
@@ -629,15 +638,15 @@ function WelcomeGate({ account, version }: { account: AccountSnapshot | null; ve
         ) : (
           <div className="space-y-4">
             <div className="text-sm text-ink-600 leading-relaxed">
-              首次使用需要登录 tititalk.com 账号。
-              免费档每日 30 分钟云端转写，付费档解锁更多额度与本地离线引擎。
+              首次使用需要登录。
+              免费版每天 30 分钟云端识别，付费版可解锁更多额度和本地离线引擎。
             </div>
             <button
               className="w-full px-4 py-3 rounded-md bg-ink-900 text-white text-sm font-medium hover:bg-ink-700 disabled:opacity-50"
               onClick={login}
               disabled={busy}
             >
-              {busy ? "正在打开浏览器…" : "用浏览器登录 / 注册"}
+              {busy ? "正在打开浏览器…" : "在浏览器登录 / 注册"}
             </button>
             {(err || errMsg) && (
               <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2 text-left space-y-2">
@@ -675,8 +684,8 @@ function WelcomeGate({ account, version }: { account: AccountSnapshot | null; ve
             )}
             <div className="text-[11px] text-ink-400 leading-relaxed space-y-1">
               <div>
-                没有账号？登录页可以一键注册（用户名 + 密码即可）。
-                所有设置会通过你的账号在多设备同步。
+                没账号？登录页可以一键注册（用户名 + 密码就行）。
+                你的设置会跟着账号在所有设备同步。
               </div>
               <div>
                 忘记密码？{" "}
@@ -747,7 +756,7 @@ function HomeQuotaCard({
           <>
             <div className="flex items-center gap-2 mb-2 tabular-nums">
               <span className="text-[12px] text-ink-500">
-                {used.toLocaleString()} / {limit.toLocaleString()} tokens
+                剩余 {fmtUsageMinutesWin(remaining ?? Math.max(0, limit - used))}
               </span>
               <span
                 className={
@@ -766,7 +775,7 @@ function HomeQuotaCard({
             </div>
           </>
         ) : (
-          <div className="text-[12px] text-ink-400">云端配额加载中…</div>
+          <div className="text-[12px] text-ink-400">云端额度加载中…</div>
         )}
       </div>
       {!isFlagship && (
@@ -898,8 +907,8 @@ function HomePane({
   }, [cfg.hotkey_mode]);
   const engineLabel = useMemo(() => {
     if (cfg.engine === "tititalk_cloud") return "TiTiTalk 云端（计平台额度）";
-    if (cfg.engine === "qwen") return "百炼 Qwen 直连（自带 key）";
-    if (cfg.engine === "openai") return "OpenAI Whisper 直连";
+    if (cfg.engine === "qwen") return "百炼 Qwen 直连（自带 API 密钥）";
+    if (cfg.engine === "openai") return "OpenAI 直连（自带 API 密钥）";
     return cfg.engine;
   }, [cfg.engine]);
 
@@ -961,17 +970,17 @@ function HomePane({
         <Banner
           tone="warn"
           title="需要登录后才能使用云端 ASR"
-          body="TiTiTalk 云端引擎按 token 计费，免费档每日 30 分钟。点右侧「去登录」用浏览器一步完成。"
-          actionLabel="去登录"
+          body="TiTiTalk 云端引擎免费每天 30 分钟。点右侧按钮在浏览器一步完成登录。"
+          actionLabel="在浏览器登录"
           onAction={onGoAccount}
         />
       )}
       {!needsLogin && needsKey && (
         <Banner
           tone="warn"
-          title={`${cfg.engine === "qwen" ? "百炼" : "OpenAI"} 引擎缺 API key`}
-          body="BYOK 直连引擎需要你自己的 key。也可以切到「TiTiTalk 云端」走平台额度。"
-          actionLabel="去填 key"
+          title={`${cfg.engine === "qwen" ? "百炼" : "OpenAI"} 引擎缺 API 密钥`}
+          body="自带 API 密钥需要你自己的密钥。也可以切到「TiTiTalk 云端」走平台额度。"
+          actionLabel="去填密钥"
           onAction={onGoSettings}
         />
       )}
@@ -993,7 +1002,7 @@ function HomePane({
         disabledReason={
           micCheck && !micCheck.ok ? "需要先开启麦克风权限" :
           needsLogin ? "需要先登录 TiTiTalk 账号" :
-          needsKey ? "需要先填 BYOK API key" : undefined
+          needsKey ? "需要先填自带 API 密钥" : undefined
         }
         hotkeyLabel={hotkeyLabel}
         onMouseDown={handleMouseDown}
@@ -1003,7 +1012,7 @@ function HomePane({
 
       <div className="grid grid-cols-2 gap-4">
         <Card title="当前热键" body={hotkeyLabel} />
-        <Card title="ASR 引擎" body={engineLabel} />
+        <Card title="识别引擎" body={engineLabel} />
         <Card title="语言" body={cfg.language === "zh" ? "中文" : cfg.language === "en" ? "英文" : "自动"} />
         <Card title="自动插入" body={cfg.auto_insert ? "已启用" : "仅复制到剪贴板"} />
       </div>

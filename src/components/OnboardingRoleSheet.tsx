@@ -49,7 +49,7 @@ export default function OnboardingRoleSheet({ onSelected }: OnboardingRoleSheetP
       onSelected?.(selectedId);
       // 不需要手动 close —— App.tsx 收到 account-state-changed 后会切走。
     } catch (e) {
-      setErrorMessage(`保存失败：${String(e)}，请重试。`);
+      setErrorMessage(`保存失败，请重试。`);
     } finally {
       setSubmitting(false);
     }
@@ -59,18 +59,18 @@ export default function OnboardingRoleSheet({ onSelected }: OnboardingRoleSheetP
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-start overflow-y-auto bg-[var(--bg-base,#fafafa)] dark:bg-[#1a1a1a]">
       <div className="w-full max-w-3xl px-8 py-8 flex flex-col gap-7">
         <header className="text-center flex flex-col gap-2 mt-4">
-          <h1 className="text-3xl font-semibold tracking-tight">你是？</h1>
+          <h1 className="text-3xl font-semibold tracking-tight">你主要做什么工作？</h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
-            选一个角色，我们会按你的工作语境定制 ASR 热词 + 润色风格。
+            选一个最像你的身份 · TiTiTalk 会自动准备好对应行业的术语词典和写作风格。
             <br />
-            之后可在 设置 → 账号 改。
+            之后可在「设置 → 账户」随时改。
           </p>
         </header>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {roles.length === 0 ? (
             <div className="col-span-full text-center text-sm text-zinc-400 py-12">
-              加载角色列表…
+              加载中…
             </div>
           ) : (
             roles.map((role) => (
@@ -99,7 +99,7 @@ export default function OnboardingRoleSheet({ onSelected }: OnboardingRoleSheetP
           disabled={submitting || !selectedId}
           className="w-full py-3 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
         >
-          {submitting ? "保存中…" : selectedId ? "确认" : "请先选一个角色"}
+          {submitting ? "保存中…" : selectedId ? "确认" : "点上面的卡片选一个"}
         </button>
       </div>
     </div>

@@ -83,8 +83,8 @@ export default function SettingsSheet({
             <TypelessRow
               icon="✦"
               iconColor="#6366F1"
-              title="ASR 引擎"
-              subtitle="云端走 tititalk.com 代理；BYOK 直连需要专业解锁包"
+              title="识别引擎"
+              subtitle="默认走 TiTiTalk 云端；用自带 API 密钥需要先解锁专业版"
               trailing={
                 <select
                   className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
@@ -105,7 +105,7 @@ export default function SettingsSheet({
           </TypelessCard>
           {!proUnlocked && (
             <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-              🔒 BYOK 引擎需要专业解锁包（¥49 一次性）。
+              🔒 用自带 API 密钥需要先解锁专业版（¥49 一次性）。
               <a
                 className="ml-1 underline hover:no-underline"
                 href="https://tititalk.com/pricing"
@@ -216,7 +216,7 @@ export default function SettingsSheet({
               icon="🌐"
               iconColor="#10B981"
               title="Ctrl+Alt+T 一键翻译选中"
-              subtitle="选中文字 → 按 Ctrl+Alt+T → 自动翻译并替换。需要在 BYOK 配 DashScope API key"
+              subtitle="选中文字 → 按 Ctrl+Alt+T → 自动翻译并替换。需要在「自带 API 密钥」里配百炼 API 密钥"
               trailing={
                 <Switch
                   checked={draft.translate_hotkey_enabled}
@@ -246,7 +246,7 @@ export default function SettingsSheet({
               icon="🪄"
               iconColor="#A855F7"
               title="Ctrl+Alt+/ 「随便问」浮窗"
-              subtitle="按一下弹起浮窗，输入指令做翻译/润色/写邮件等。需要在 BYOK 配 DashScope API key"
+              subtitle="按一下弹起浮窗，输入指令做翻译/整理/写邮件等。需要在「自带 API 密钥」里配百炼 API 密钥"
               trailing={
                 <Switch
                   checked={draft.assistant_hotkey_enabled}
@@ -259,13 +259,13 @@ export default function SettingsSheet({
 
         {/* 风格 */}
         <section>
-          <TypelessSectionHeader title="润色风格" subtitle="AI 把口语整理成什么样" />
+          <TypelessSectionHeader title="整理风格" subtitle="AI 把口语整理成什么样" />
           <TypelessCard>
             <TypelessRow
               icon="✨"
               iconColor="#8B5CF6"
-              title="启用润色"
-              subtitle="转写后再走一发 LLM 调通顺；失败自动用原文"
+              title="开启自动整理"
+              subtitle="识别完再让 AI 调通顺；失败自动用原文"
               trailing={
                 <Switch
                   checked={draft.stylist_enabled}
@@ -456,7 +456,7 @@ export default function SettingsSheet({
             <span className="text-base">{advanced ? "▾" : "▸"}</span>
             <span className="font-semibold">高级</span>
             <span className="text-xs text-ink-400">
-              BYOK · 模型 · 词典 · 自动清理
+              自带 API 密钥 · 模型 · 词典 · 自动清理
             </span>
           </button>
 
@@ -466,8 +466,8 @@ export default function SettingsSheet({
               <TypelessCard>
                 <TypelessRow
                   icon="🌐"
-                  title="ASR 语言"
-                  subtitle="默认 auto 适合中英混说；改单语在外文比例高时偶尔提升识别率"
+                  title="识别语言"
+                  subtitle="默认自动适合中英混说；改单语在外文比例高时偶尔提升识别率"
                   trailing={
                     <select
                       className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
@@ -486,8 +486,8 @@ export default function SettingsSheet({
                 <TypelessCard>
                   <TypelessRow
                     icon="🏷"
-                    title="模型"
-                    subtitle="留空走默认（百炼 qwen3-asr-flash / OpenAI whisper-1）"
+                    title="识别模型"
+                    subtitle="留空走默认（百炼用 qwen3-asr-flash / OpenAI 用 whisper-1）"
                     trailing={
                       <input
                         className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white w-44"
@@ -501,8 +501,8 @@ export default function SettingsSheet({
                   />
                   <TypelessRow
                     icon="🔑"
-                    title="API key"
-                    subtitle="只存本地 keystore，不上传"
+                    title="API 密钥"
+                    subtitle="只存本地，不上传"
                     trailing={
                       <input
                         type="password"
@@ -519,8 +519,8 @@ export default function SettingsSheet({
               <TypelessCard>
                 <TypelessRow
                   icon="✏︎"
-                  title="润色模型"
-                  subtitle="留空走 qwen-turbo；BYOK 时用你的 key 调"
+                  title="整理模型"
+                  subtitle="留空走 qwen-turbo；用了自带 API 密钥就走你的"
                   trailing={
                     <input
                       className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white w-44 disabled:opacity-50"
@@ -535,7 +535,7 @@ export default function SettingsSheet({
                 {draft.stylist_enabled && (
                   <TypelessRow
                     icon="🎚"
-                    title="润色强度"
+                    title="整理强度"
                     subtitle={
                       draft.polish_intensity === "light" ? "轻 · 只补标点 / 删口头禅" :
                       draft.polish_intensity === "heavy" ? "重 · 改写为正式书面语，可能偏离原意" :
@@ -639,7 +639,7 @@ export default function SettingsSheet({
               }
             }}
           >
-            测试 API key
+            测试 API 密钥
           </button>
           <span className="text-sm text-ink-500">{testResult}</span>
         </div>

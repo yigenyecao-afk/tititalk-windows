@@ -164,7 +164,7 @@ export default function AccountSection() {
       <div className="text-[11px] text-ink-400 leading-relaxed pt-1 space-y-0.5">
         <div>
           独立开发者运营 · <a href="https://tititalk.com" target="_blank" rel="noreferrer" className="underline">tititalk.com</a>
-          ·  没有找回流程，请妥善保管账号密码。
+          ·  暂无密码找回功能，请妥善保管账号密码。
         </div>
         {/* PIPL：把隐私政策入口紧贴账号信息后面 —— 用户找数据处理说明
             的本能位置。无登录态 / 已登录态都看得见。 */}
@@ -191,14 +191,14 @@ function UnauthenticatedView({
     <div>
       <div className="font-medium text-ink-900">尚未登录</div>
       <div className="text-sm text-ink-500 mt-1 mb-3">
-        登录 tititalk.com 后可使用云端配置同步、Pro 计费和多设备管理。
+        在浏览器登录 tititalk.com 账号后，可同步设置、查看每日额度、管理已登录的设备。
       </div>
       <button
         className="px-4 py-2 rounded-md bg-ink-900 text-white text-sm hover:bg-ink-700 disabled:opacity-50"
         onClick={onLogin}
         disabled={busy}
       >
-        登录 tititalk.com
+        在浏览器登录
       </button>
       {error && <div className="text-sm text-red-600 mt-2">{error}</div>}
     </div>
@@ -303,9 +303,9 @@ function AuthenticatedView({
         <div className="flex items-center gap-2 px-3 py-2 rounded border border-amber-200 bg-amber-50 text-xs">
           <span className="text-amber-700">⚠️</span>
           <div className="flex-1">
-            <div className="font-medium text-amber-800">配额信息加载失败</div>
+            <div className="font-medium text-amber-800">额度信息加载失败</div>
             <div className="text-amber-700">
-              可能是网络抖动。功能仍可用，但显示的剩余 token 可能不准。
+              可能是网络问题。功能仍可用，但显示的剩余额度可能不准。
             </div>
           </div>
           <button
@@ -462,9 +462,9 @@ function UpgradeCard() {
     } catch (e) {
       const msg = String(e);
       if (msg.includes("pro_already_unlocked") || msg.includes("409")) {
-        setPayErr("已解锁专业版，无需重复购买。");
+        setPayErr("你已是专业版，无需重复购买。");
       } else if (msg.includes("payment_provider")) {
-        setPayErr("支付通道暂时不可用，请稍后重试。");
+        setPayErr("支付通道暂时不可用，请稍后再试。");
       } else {
         setPayErr("下单失败：" + msg);
       }
@@ -842,9 +842,9 @@ function QuotaBar({ q }: { q: QuotaInfo }) {
     return (
       <div>
         <div className="flex items-center justify-between text-xs">
-          <span className="font-medium text-ink-700">今日云端 token</span>
+          <span className="font-medium text-ink-700">今日剩余额度</span>
           <span className={"tabular-nums " + (empty ? "text-red-600" : "text-ink-900")}>
-            {fmtNumber(remaining)} / {fmtNumber(limit)} tokens
+            还能录约 {fmtTokenSeconds(remaining)}
           </span>
         </div>
         <div className="mt-1 h-2 rounded bg-ink-100 overflow-hidden">
@@ -858,11 +858,11 @@ function QuotaBar({ q }: { q: QuotaInfo }) {
         </div>
         {empty ? (
           <div className="text-[11px] text-ink-500 mt-1">
-            今日 token 用完。可升级专业版、解锁本地 Whisper 或切到 BYOK 自带 key。{resetCopy}。
+            今日额度用完了。可以升级专业版，或切到本地引擎 / 自带 API 密钥继续录。{resetCopy}。
           </div>
         ) : pct > 0.8 ? (
           <div className="text-[11px] text-ink-500 mt-1">
-            快用完了：约 {fmtTokenSeconds(remaining)} 录音剩余。{resetCopy}。
+            快用完了：还能录约 {fmtTokenSeconds(remaining)}。{resetCopy}。
           </div>
         ) : (
           <div className="text-[11px] text-ink-400 mt-1">{resetCopy}。</div>
@@ -895,17 +895,13 @@ function QuotaBar({ q }: { q: QuotaInfo }) {
       </div>
       {empty ? (
         <div className="text-[11px] text-ink-500 mt-1">
-          今日额度用完，云调用已自动降级到本地。{resetCopy}。
+          今日额度用完了，已自动切到本地引擎继续录。{resetCopy}。
         </div>
       ) : (
         <div className="text-[11px] text-ink-400 mt-1">{resetCopy}。</div>
       )}
     </div>
   );
-}
-
-function fmtNumber(n: number): string {
-  return n.toLocaleString("zh-CN");
 }
 
 function fmtTokenSeconds(tokens: number): string {

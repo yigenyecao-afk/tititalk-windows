@@ -35,7 +35,7 @@ export default function HistoryQuotaBanner() {
   if (!account) {
     return (
       <div className="px-5 py-2.5 bg-ink-50 border-b border-ink-200 text-xs text-ink-500">
-        云端用量加载中…
+        额度加载中…
       </div>
     );
   }
@@ -60,9 +60,9 @@ export default function HistoryQuotaBanner() {
 
     return (
       <div className="px-5 py-2.5 bg-ink-50 border-b border-ink-200 flex items-center gap-3 text-xs">
-        <span className="text-ink-700 font-medium">📊 今日云端用量</span>
+        <span className="text-ink-700 font-medium">📊 今日剩余</span>
         <span className="text-ink-500 font-mono tabular-nums">
-          {used.toLocaleString()} / {limit.toLocaleString()} tokens
+          还能录约 {fmtTokenSeconds(remaining)}（共 {fmtTokenSeconds(limit)}）
         </span>
         <div className="flex-1 max-w-xs h-1.5 rounded-full bg-ink-200 overflow-hidden">
           <div
@@ -74,13 +74,13 @@ export default function HistoryQuotaBanner() {
           {Math.round(pct * 100)}%
         </span>
         <span className="text-ink-400">·</span>
-        <span className="text-ink-500 uppercase tracking-wide">{planRaw}</span>
+        <span className="text-ink-500">{planLabel(planRaw)}</span>
         <button
           type="button"
           onClick={handleRefresh}
           disabled={refreshing}
           className="ml-auto text-ink-400 hover:text-ink-700 disabled:opacity-40"
-          title="刷新云端配额"
+          title="刷新额度"
         >
           <span className={refreshing ? "inline-block animate-spin" : "inline-block"}>↻</span>
         </button>
@@ -91,21 +91,39 @@ export default function HistoryQuotaBanner() {
   // 付费档无 limit 字段
   return (
     <div className="px-5 py-2.5 bg-ink-50 border-b border-ink-200 flex items-center gap-3 text-xs">
-      <span className="text-ink-700 font-medium">📊 云端用量</span>
+      <span className="text-ink-700 font-medium">📊 今日已用</span>
       <span className="text-ink-500 font-mono tabular-nums">
-        {(quota?.used_tokens ?? 0).toLocaleString()} tokens 已用
+        {fmtTokenSeconds(quota?.used_tokens ?? 0)}
       </span>
       <span className="text-ink-400">·</span>
-      <span className="text-ink-500 uppercase tracking-wide">{planRaw}</span>
+      <span className="text-ink-500">{planLabel(planRaw)}</span>
       <button
         type="button"
         onClick={handleRefresh}
         disabled={refreshing}
         className="ml-auto text-ink-400 hover:text-ink-700 disabled:opacity-40"
-        title="刷新云端配额"
+        title="刷新额度"
       >
         <span className={refreshing ? "inline-block animate-spin" : "inline-block"}>↻</span>
       </button>
     </div>
   );
+}
+
+function fmtTokenSeconds(tokens: number): string {
+  const secs = Math.max(0, Math.floor(tokens / 10));
+  if (secs < 60) return `${secs} 秒`;
+  if (secs < 3600) return `${Math.floor(secs / 60)} 分钟`;
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  return m === 0 ? `${h} 小时` : `${h} 小时 ${m} 分`;
+}
+
+function planLabel(plan: string): string {
+  const p = plan.toLowerCase();
+  if (p.includes("flagship")) return "旗舰版";
+  if (p.includes("annual"))   return "年度专业版";
+  if (p.includes("lifetime")) return "终身专业版";
+  if (p.includes("pro"))      return "专业版";
+  return "免费版";
 }
