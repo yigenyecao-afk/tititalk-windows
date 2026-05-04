@@ -118,6 +118,12 @@ pub struct AppConfig {
     /// 「Speak Chinese, get English」类需求一次设置长期生效。
     #[serde(default = "default_output_language_override")]
     pub output_language_override: String,
+    /// (v0.9.x Editorial Chinese) 录音浮窗主题。Editorial 重做后 4 主题各代表
+    /// 一种「形态人格」：lantern (灯笼·球形朱砂) / annotation (批注·便签纸) /
+    /// telegraph (电报·屏幕底 ticker) / seal (印章·朱砂方印)。默认 lantern。
+    /// 旧 key (typeless/mono/aurora/titi) 已移除 — 新装直接 lantern。
+    #[serde(default = "default_pill_theme")]
+    pub pill_theme: String,
 }
 
 fn default_engine() -> String { "tititalk_cloud".into() }
@@ -152,6 +158,7 @@ fn default_double_modifier_key() -> String { String::new() }
 fn default_mouse_side_button() -> u32 { 0 }
 fn default_translation_target() -> String { "English".into() }
 fn default_output_language_override() -> String { String::new() }
+fn default_pill_theme() -> String { "lantern".into() }
 fn yes() -> bool { true }
 fn no() -> bool { false }
 
@@ -188,6 +195,7 @@ impl Default for AppConfig {
             translation_target: default_translation_target(),
             assistant_hotkey_enabled: true,
             output_language_override: default_output_language_override(),
+            pill_theme: default_pill_theme(),
         }
     }
 }

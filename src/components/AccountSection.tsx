@@ -393,17 +393,37 @@ function AuthenticatedView({
   );
 }
 
+/// (v0.9 Editorial Chinese) 朱砂方印形 plan badge —— 壹/贰/叁号读者。
+/// 跟网站定价 spine（字字珠玑/笔走龙蛇/著作等身）同序号。
+/// 副标签（终身/旗舰/年订）用 monospaced caption 跟在 章 后面。
 function PlanBadge({ plan }: { plan: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    pro_lifetime: { label: "终身", cls: "bg-purple-50 text-purple-700 border-purple-200" },
-    pro_flagship: { label: "旗舰", cls: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
-    pro_annual: { label: "年订", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-    free: { label: "免费", cls: "bg-ink-100 text-ink-600 border-ink-200" },
+  const map: Record<string, { numeral: string; sub: string; tone: "ink" | "signal" }> = {
+    pro_lifetime: { numeral: "叁", sub: "终身", tone: "signal" },
+    pro_flagship: { numeral: "叁", sub: "旗舰", tone: "signal" },
+    pro_annual:   { numeral: "贰", sub: "年订", tone: "signal" },
+    free:         { numeral: "壹", sub: "免费", tone: "ink" },
   };
-  const m = map[plan] || { label: plan, cls: "bg-ink-100 text-ink-600 border-ink-200" };
+  const m = map[plan] || { numeral: "—", sub: plan, tone: "ink" as const };
+  const fill = m.tone === "signal" ? "#D7392E" : "#7993A8";
   return (
-    <span className={"text-xs px-2 py-0.5 rounded border font-medium " + m.cls}>
-      {m.label}
+    <span className="inline-flex items-center gap-1.5 align-middle">
+      {/* 朱砂方印 SVG —— 12×12 圆角小章，篆体 numeral，单字镌刻 */}
+      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+        <rect x="1" y="1" width="12" height="12" rx="1.5"
+              fill={fill}
+              stroke={fill} strokeWidth="0.6" />
+        <text x="7" y="9.8" textAnchor="middle"
+              fontFamily='"Noto Serif SC","STSong",serif'
+              fontSize="8.5" fontWeight="700" fill="#FFFFFF" letterSpacing="-0.4">
+          {m.numeral}
+        </text>
+      </svg>
+      <span className="font-serif text-[12px] font-medium text-ink-800">
+        {m.numeral}号读者
+      </span>
+      <span className="font-mono text-[10px] tracking-wider text-ink-400 uppercase">
+        · {m.sub}
+      </span>
     </span>
   );
 }
@@ -570,53 +590,100 @@ function UpgradeCard() {
 
   return (
     <>
-      <div className="rounded border border-ink-200 bg-ink-50 p-3 space-y-2">
-        <div className="text-xs font-medium text-ink-700">解锁更多能力</div>
+      {/* (v0.9 Editorial Chinese) 订阅明信片 —— 暖黄 paper-warm 卡纸 + 朱砂
+          方印 plan numeral + 仿宋大字 title + monospaced 价格栏。每张片代表一档
+          订阅，点击即下单。 */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="font-mono text-[10px] tracking-[0.3em] text-signal-500 font-medium uppercase">
+            CHAPTER · 订阅
+          </span>
+          <div className="flex-1 h-px bg-ink-200" />
+          <span className="font-mono text-[10px] tracking-wider text-ink-400 uppercase">
+            postcard subscription
+          </span>
+        </div>
         {payErr && (
-          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+          <div className="font-mono text-[11px] text-signal-500 bg-signal-100/40 border border-signal-500/30 rounded px-2.5 py-1.5">
             {payErr}
           </div>
         )}
         {pollWarn && !payErr && (
-          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+          <div className="font-mono text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
             {pollWarn}
           </div>
         )}
-        <div className="grid grid-cols-1 gap-2">
-          {purchasable.map((p) => (
-            <button
-              key={p.code}
-              onClick={() => handleBuy(p)}
-              disabled={!!pending}
-              className={
-                "flex items-start justify-between rounded bg-white border px-3 py-2.5 text-left hover:border-indigo-300 transition disabled:opacity-50 " +
-                (p.recommended ? "border-indigo-300 bg-indigo-50/40" : "border-ink-200")
-              }
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-medium text-ink-900">{p.title}</span>
-                  {p.recommended && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600 text-white font-medium">
-                      推荐
+        <div className="grid grid-cols-1 gap-3">
+          {purchasable.map((p) => {
+            const numeral = p.code === "pro_annual" ? "贰" : (p.code.startsWith("pro_") ? "叁" : "壹");
+            return (
+              <button
+                key={p.code}
+                onClick={() => handleBuy(p)}
+                disabled={!!pending}
+                className={
+                  "group relative w-full text-left transition disabled:opacity-50 " +
+                  "rounded-md border bg-paper-warm/60 hover:bg-paper-warm/90 hover:border-signal-500/50 " +
+                  "shadow-[0_1px_0_rgba(0,0,0,0.04)] hover:shadow-[2px_3px_0_rgba(215,57,46,0.15)] " +
+                  (p.recommended ? "border-signal-500/40" : "border-ink-200")
+                }
+                style={{ aspectRatio: "1.62 / 1" }}
+              >
+                {/* 邮票位 — 朱砂方印 plan numeral */}
+                <div className="absolute top-3 right-3 w-12 h-14 flex flex-col items-center justify-between
+                                border border-signal-500/40 bg-paper-warm rounded-sm">
+                  <div className="font-mono text-[7px] tracking-widest text-signal-500/70 mt-1">TT</div>
+                  <div className="flex-1 flex items-center justify-center">
+                    <span className="font-serif text-[26px] font-bold text-signal-500 leading-none">
+                      {numeral}
                     </span>
-                  )}
+                  </div>
+                  <div className="font-mono text-[6px] tracking-wider text-signal-500/50 mb-1">
+                    {p.code === "pro_annual" ? "ANN" : p.code.startsWith("pro_") ? "PRO" : "FREE"}
+                  </div>
                 </div>
-                <div className="text-xs text-ink-500 mt-0.5">{p.subtitle}</div>
-                {p.features.length > 0 && (
-                  <ul className="text-[11px] text-ink-500 mt-1 space-y-0.5">
-                    {p.features.map((f) => <li key={f}>· {f}</li>)}
-                  </ul>
-                )}
-              </div>
-              <div className="text-right ml-2 shrink-0">
-                <div className="text-base font-semibold text-ink-900">
-                  ¥{(p.price_cents / 100).toFixed(0)}
+
+                {/* 内容 */}
+                <div className="p-5 pr-20 h-full flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="font-mono text-[9px] tracking-[0.25em] text-signal-500 uppercase font-medium">
+                        {numeral}号订阅
+                      </span>
+                      {p.recommended && (
+                        <span className="font-mono text-[9px] tracking-wider px-1.5 py-px rounded-sm bg-signal-500 text-white">
+                          推荐
+                        </span>
+                      )}
+                    </div>
+                    <div className="font-serif text-[20px] font-medium text-ink-900 leading-snug">
+                      {p.title}
+                    </div>
+                    <div className="text-[12px] text-ink-500 mt-1 leading-relaxed line-clamp-2">
+                      {p.subtitle}
+                    </div>
+                  </div>
+                  <div className="flex items-end justify-between mt-3">
+                    {p.features.length > 0 && (
+                      <div className="text-[11px] text-ink-500 leading-relaxed flex-1 mr-3">
+                        {p.features.slice(0, 2).map((f, i) => (
+                          <div key={i} className="font-serif">· {f}</div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="text-right shrink-0">
+                      <div className="font-serif text-[28px] font-semibold text-ink-900 tabular-nums leading-none">
+                        ¥{(p.price_cents / 100).toFixed(0)}
+                      </div>
+                      <div className="font-mono text-[10px] tracking-wider text-signal-500 mt-1 uppercase group-hover:underline">
+                        立即升级 →
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-[10px] text-indigo-700 mt-0.5">立即升级</div>
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
       </div>
 

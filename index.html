@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TiTiTalk</title>
+    <!-- (v0.9 Editorial Chinese) 思源宋体 display + JetBrains Mono caption。
+         display=swap 避免阻塞首屏；preconnect 节省 100ms 首字节。Tauri webview
+         首次启动需联网拉一次，缓存后离线也能用；拉不到自动落 STSong / Microsoft
+         YaHei UI（在 tailwind fontFamily 里都列了）。 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
   </head>
   <body class="bg-ink-50 text-ink-900">
     <div id="root"></div>

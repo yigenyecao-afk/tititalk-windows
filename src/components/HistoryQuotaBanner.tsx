@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { getAccountState, onAccountState, reloadMe, type AccountSnapshot } from "../lib/account";
 
-/// 历史 tab 顶部的云端 quota 横条 —— 跟 Mac HistoryQuotaBanner 同款。
-/// 显示今日 used/limit + ProgressView + 手动刷新。数据从 AccountSnapshot
-/// 拿，挂载时主动 reload 一次。
+/// (v0.9 Editorial Chinese) 历史 tab 顶部云端 quota 横条 —— 跟 Mac
+/// HistoryQuotaBanner 同款。砍 emoji 📊；加 1px 朱砂顶部进度条 + 仿宋
+/// metric label + JetBrains Mono caption。
 ///
-/// AccountSnapshot 里没单独 reloadMe 命令，登录态变化会自动 push 新 snapshot；
+/// AccountSnapshot 没单独 reloadMe 命令，登录态变化会自动 push 新 snapshot；
 /// 这里通过订阅 onAccountState 拿到最新 quota。manual refresh 按钮拉个 fresh
 /// snapshot 触发后端 /api/me 透传。
 export default function HistoryQuotaBanner() {
@@ -15,8 +15,7 @@ export default function HistoryQuotaBanner() {
   useEffect(() => {
     getAccountState().then(setAccount).catch(() => {});
     const un = onAccountState(setAccount);
-    // (v0.7.8) 挂载时主动 reload，跟 Mac HistoryQuotaBanner.onAppear 对齐 ——
-    // 用户切到历史 tab 立刻看到最新 quota，不依赖被动事件推送。
+    // (v0.7.8) 挂载时主动 reload，跟 Mac HistoryQuotaBanner.onAppear 对齐
     reloadMe().catch(() => {});
     return () => {
       un.then((fn) => fn());
@@ -34,8 +33,9 @@ export default function HistoryQuotaBanner() {
 
   if (!account) {
     return (
-      <div className="px-5 py-2.5 bg-ink-50 border-b border-ink-200 text-xs text-ink-500">
-        额度加载中…
+      <div className="relative px-5 pt-3 pb-2.5 border-b border-ink-200 bg-white">
+        <div className="absolute top-0 left-0 right-0 h-px bg-ink-100" />
+        <div className="font-mono text-[11px] text-ink-400">额度加载中…</div>
       </div>
     );
   }
@@ -53,59 +53,76 @@ export default function HistoryQuotaBanner() {
     const remaining = quota.remaining_tokens;
     const used = quota.used_tokens ?? Math.max(0, limit - remaining);
     const pct = limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0;
-    const tone =
-      pct >= 0.95 ? "text-red-600" : pct >= 0.8 ? "text-amber-600" : "text-ink-500";
-    const barTone =
-      pct >= 0.95 ? "bg-red-500" : pct >= 0.8 ? "bg-amber-500" : "bg-indigo-500";
+    const danger = pct >= 0.95;
+    const warn = pct >= 0.8 && !danger;
+    const tone = danger ? "text-signal-500" : warn ? "text-amber-600" : "text-ink-400";
+    const barColor = danger ? "bg-signal-500" : warn ? "bg-amber-500" : "bg-signal-500/80";
 
     return (
-      <div className="px-5 py-2.5 bg-ink-50 border-b border-ink-200 flex items-center gap-3 text-xs">
-        <span className="text-ink-700 font-medium">📊 今日剩余</span>
-        <span className="text-ink-500 font-mono tabular-nums">
-          还能录约 {fmtTokenSeconds(remaining)}（共 {fmtTokenSeconds(limit)}）
-        </span>
-        <div className="flex-1 max-w-xs h-1.5 rounded-full bg-ink-200 overflow-hidden">
+      <div className="relative px-5 pt-3 pb-2.5 border-b border-ink-200 bg-white">
+        {/* (v0.9) 1px 顶部进度条 —— 编辑器风的进度反馈，不抢主体注意力 */}
+        <div className="absolute top-0 left-0 right-0 h-[2px] bg-ink-100">
           <div
-            className={`h-full ${barTone} transition-all duration-300`}
+            className={`h-full ${barColor} transition-all duration-300`}
             style={{ width: `${pct * 100}%` }}
           />
         </div>
-        <span className={`font-mono tabular-nums ${tone}`}>
-          {Math.round(pct * 100)}%
-        </span>
-        <span className="text-ink-400">·</span>
-        <span className="text-ink-500">{planLabel(planRaw)}</span>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="ml-auto text-ink-400 hover:text-ink-700 disabled:opacity-40"
-          title="刷新额度"
-        >
-          <span className={refreshing ? "inline-block animate-spin" : "inline-block"}>↻</span>
-        </button>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="font-mono text-[10px] tracking-[0.25em] text-signal-500 font-medium uppercase">
+            今日额度
+          </span>
+          <span className="font-serif text-[14px] text-ink-900 tabular-nums">
+            还能录约 <span className="font-medium">{fmtTokenSeconds(remaining)}</span>
+          </span>
+          <span className="font-mono text-[11px] text-ink-400">
+            / {fmtTokenSeconds(limit)}
+          </span>
+          <span className={`font-mono text-[11px] tabular-nums ${tone}`}>
+            {Math.round(pct * 100)}%
+          </span>
+          <div className="flex-1" />
+          <span className="font-mono text-[10px] tracking-wider text-ink-500 uppercase">
+            {planLabel(planRaw)}
+          </span>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="text-ink-400 hover:text-signal-500 disabled:opacity-40 transition-colors"
+            title="刷新额度"
+          >
+            <span className={refreshing ? "inline-block animate-spin" : "inline-block"}>↻</span>
+          </button>
+        </div>
       </div>
     );
   }
 
   // 付费档无 limit 字段
   return (
-    <div className="px-5 py-2.5 bg-ink-50 border-b border-ink-200 flex items-center gap-3 text-xs">
-      <span className="text-ink-700 font-medium">📊 今日已用</span>
-      <span className="text-ink-500 font-mono tabular-nums">
-        {fmtTokenSeconds(quota?.used_tokens ?? 0)}
-      </span>
-      <span className="text-ink-400">·</span>
-      <span className="text-ink-500">{planLabel(planRaw)}</span>
-      <button
-        type="button"
-        onClick={handleRefresh}
-        disabled={refreshing}
-        className="ml-auto text-ink-400 hover:text-ink-700 disabled:opacity-40"
-        title="刷新额度"
-      >
-        <span className={refreshing ? "inline-block animate-spin" : "inline-block"}>↻</span>
-      </button>
+    <div className="relative px-5 pt-3 pb-2.5 border-b border-ink-200 bg-white">
+      <div className="absolute top-0 left-0 right-0 h-[2px] bg-signal-500/30" />
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="font-mono text-[10px] tracking-[0.25em] text-signal-500 font-medium uppercase">
+          今日已用
+        </span>
+        <span className="font-serif text-[14px] text-ink-900 tabular-nums">
+          {fmtTokenSeconds(quota?.used_tokens ?? 0)}
+        </span>
+        <div className="flex-1" />
+        <span className="font-mono text-[10px] tracking-wider text-ink-500 uppercase">
+          {planLabel(planRaw)}
+        </span>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="text-ink-400 hover:text-signal-500 disabled:opacity-40 transition-colors"
+          title="刷新额度"
+        >
+          <span className={refreshing ? "inline-block animate-spin" : "inline-block"}>↻</span>
+        </button>
+      </div>
     </div>
   );
 }

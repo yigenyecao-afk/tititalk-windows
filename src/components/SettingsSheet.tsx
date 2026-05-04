@@ -13,6 +13,7 @@ import {
   TypelessRow,
   TypelessSectionHeader,
 } from "./TypelessRow";
+import { Icon } from "./Icon";
 
 /// Typeless 风设置 sheet — 跟 Mac TypelessSettingsSheet 一一对应。
 /// 6 sections：听写 / 快捷键 / 风格 / 隐私 / 提示音 / 高级（默认收起）。
@@ -81,7 +82,7 @@ export default function SettingsSheet({
           <TypelessSectionHeader title="听写" subtitle="语音识别引擎与语言" />
           <TypelessCard>
             <TypelessRow
-              icon="✦"
+              iconNode={<Icon name="engine" />}
               iconColor="#6366F1"
               title="识别引擎"
               subtitle="默认走 TiTiTalk 云端；用自带 API 密钥需要先解锁专业版"
@@ -123,7 +124,7 @@ export default function SettingsSheet({
           <TypelessSectionHeader title="快捷键" subtitle="按一下就能开始说话" />
           <TypelessCard>
             <TypelessRow
-              icon="⌘"
+              iconNode={<Icon name="keyboard" />}
               iconColor="#10B981"
               title="录音热键"
               subtitle={
@@ -147,7 +148,7 @@ export default function SettingsSheet({
               }
             />
             <TypelessRow
-              icon="✋"
+              iconNode={<Icon name="hand" />}
               iconColor="#F59E0B"
               title="触发方式"
               subtitle={hotkeyModeHint(draft.hotkey_mode)}
@@ -167,7 +168,7 @@ export default function SettingsSheet({
             />
             {/* (v0.8.4 P2-2) 双修饰键 hotkey —— 默认关 */}
             <TypelessRow
-              icon="⌥"
+              iconNode={<Icon name="modifier" />}
               iconColor="#6366F1"
               title="双击修饰键触发"
               subtitle={
@@ -191,7 +192,7 @@ export default function SettingsSheet({
             />
             {/* (v0.8.4 P2-1) 鼠标侧键 hotkey —— 默认关 */}
             <TypelessRow
-              icon="🖱"
+              iconNode={<Icon name="mouse" />}
               iconColor="#0EA5E9"
               title="鼠标侧键触发"
               subtitle={
@@ -213,7 +214,7 @@ export default function SettingsSheet({
             />
             {/* (v0.8.4 backlog #4) Ctrl+Alt+T 翻译开关 + 目标语言 */}
             <TypelessRow
-              icon="🌐"
+              iconNode={<Icon name="globe" />}
               iconColor="#10B981"
               title="Ctrl+Alt+T 一键翻译选中"
               subtitle="选中文字 → 按 Ctrl+Alt+T → 自动翻译并替换。需要在「自带 API 密钥」里配百炼 API 密钥"
@@ -226,7 +227,7 @@ export default function SettingsSheet({
             />
             {draft.translate_hotkey_enabled && (
               <TypelessRow
-                icon="🗣"
+                iconNode={<Icon name="speak" />}
                 iconColor="#10B981"
                 title="翻译目标语言"
                 subtitle="自然语言写法（English / 日本語 / Français / 粤语 等）"
@@ -243,7 +244,7 @@ export default function SettingsSheet({
             )}
             {/* (v0.8.4 backlog #5) Ctrl+Alt+/ 「随便问」浮窗开关 */}
             <TypelessRow
-              icon="🪄"
+              iconNode={<Icon name="magic" />}
               iconColor="#A855F7"
               title="Ctrl+Alt+/ 「随便问」浮窗"
               subtitle="按一下弹起浮窗，输入指令做翻译/整理/写邮件等。需要在「自带 API 密钥」里配百炼 API 密钥"
@@ -262,7 +263,7 @@ export default function SettingsSheet({
           <TypelessSectionHeader title="整理风格" subtitle="AI 把口语整理成什么样" />
           <TypelessCard>
             <TypelessRow
-              icon="✨"
+              iconNode={<Icon name="sparkle" />}
               iconColor="#8B5CF6"
               title="开启自动整理"
               subtitle="识别完再让 AI 调通顺；失败自动用原文"
@@ -274,7 +275,7 @@ export default function SettingsSheet({
               }
             />
             <TypelessRow
-              icon="🎨"
+              iconNode={<Icon name="palette" />}
               iconColor="#EC4899"
               title="风格"
               subtitle="也可以说「正式一点」「邮件腔」临时切换"
@@ -299,9 +300,17 @@ export default function SettingsSheet({
                 </select>
               }
             />
+            {/* (v0.9 Editorial Chinese) 整理风格实时案例预览 —— 让用户一眼看见
+                4 个 persona 把同一句口语会处理成什么样，省去先保存再录一段才知道
+                差异。例句故意带口语啰嗦 + 中英混 + 一个数字，4 种处理风格一目了然。 */}
+            {draft.stylist_enabled && (
+              <div className="px-4 pb-4 pt-1">
+                <PersonaPreview persona={draft.stylist_persona} />
+              </div>
+            )}
             {/* (v0.8.4 typeless 学习 P1 #4) 输出语言覆盖 */}
             <TypelessRow
-              icon="🌍"
+              iconNode={<Icon name="earth" />}
               iconColor="#0EA5E9"
               title="输出语言"
               subtitle="说一种语言、自动翻译成另一种语言后插入。空 = 跟随说话语言不翻译"
@@ -326,12 +335,35 @@ export default function SettingsSheet({
           </TypelessCard>
         </section>
 
+        {/* 录音浮窗外观 — Editorial 4 主题 */}
+        <section>
+          <TypelessSectionHeader title="录音浮窗" subtitle="说话时屏幕上出现的小窗" />
+          <TypelessCard>
+            <TypelessRow
+              title="浮窗主题"
+              subtitle={pillThemeHint(draft.pill_theme)}
+              trailing={
+                <select
+                  className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+                  value={draft.pill_theme}
+                  onChange={(e) => patch("pill_theme", e.target.value as typeof draft.pill_theme)}
+                >
+                  <option value="lantern">灯笼 · 默认（朱砂呼吸光晕）</option>
+                  <option value="annotation">批注 · 暖黄信纸便签</option>
+                  <option value="telegraph">电报 · 屏幕底等宽 ticker</option>
+                  <option value="seal">印章 · 朱砂方印章</option>
+                </select>
+              }
+            />
+          </TypelessCard>
+        </section>
+
         {/* 输出 */}
         <section>
           <TypelessSectionHeader title="输出" subtitle="转写完成后的行为" />
           <TypelessCard>
             <TypelessRow
-              icon="↵"
+              iconNode={<Icon name="enter" />}
               iconColor="#06B6D4"
               title="自动插入到光标"
               subtitle="关闭后只复制到剪贴板，不自动粘贴"
@@ -343,7 +375,7 @@ export default function SettingsSheet({
               }
             />
             <TypelessRow
-              icon="📋"
+              iconNode={<Icon name="clipboard" />}
               iconColor="#64748B"
               title="同时复制到剪贴板"
               subtitle="自动插入失败时仍能 Ctrl+V 粘贴"
@@ -362,7 +394,7 @@ export default function SettingsSheet({
           <TypelessSectionHeader title="体验增强" subtitle="排版、取消、降噪等小开关" />
           <TypelessCard>
             <TypelessRow
-              icon="␣"
+              iconNode={<Icon name="space" />}
               iconColor="#06B6D4"
               title="中英文之间自动加空格"
               subtitle="「打开 VSCode 看代码」自动补空格，更易读"
@@ -374,7 +406,7 @@ export default function SettingsSheet({
               }
             />
             <TypelessRow
-              icon="⎋"
+              iconNode={<Icon name="esc" />}
               iconColor="#EF4444"
               title="ESC 取消录音 / 转写"
               subtitle="录音中或处理中按 ESC 立即丢弃，不计配额"
@@ -386,7 +418,7 @@ export default function SettingsSheet({
               }
             />
             <TypelessRow
-              icon="🔇"
+              iconNode={<Icon name="mute" />}
               iconColor="#8B5CF6"
               title="录音中静音系统输出"
               subtitle="开会/听音乐时按住快捷键自动静音，松开恢复"
@@ -411,7 +443,7 @@ export default function SettingsSheet({
           <TypelessSectionHeader title="提示音" subtitle="录音开始/结束的反馈" />
           <TypelessCard>
             <TypelessRow
-              icon="🔔"
+              iconNode={<Icon name="bell" />}
               iconColor="#F59E0B"
               title="启用提示音"
               subtitle="开始/结束录音时播放短音提示"
@@ -424,7 +456,7 @@ export default function SettingsSheet({
             />
             {draft.sound_feedback_enabled && (
               <TypelessRow
-                icon="🔊"
+                iconNode={<Icon name="volume" />}
                 iconColor="#F59E0B"
                 title="音量"
                 subtitle={`${Math.round(draft.sound_feedback_volume * 100)}%`}
@@ -451,13 +483,30 @@ export default function SettingsSheet({
           <button
             type="button"
             onClick={() => setAdvanced((v) => !v)}
-            className="flex items-center gap-2 text-sm text-ink-700 hover:text-ink-900 px-1"
+            className="flex items-center gap-2 text-sm text-ink-700 hover:text-ink-900 px-1 w-full"
           >
             <span className="text-base">{advanced ? "▾" : "▸"}</span>
             <span className="font-semibold">高级</span>
-            <span className="text-xs text-ink-400">
-              自带 API 密钥 · 模型 · 词典 · 自动清理
-            </span>
+            {/* (v0.9 Editorial Chinese) 折叠时显示真实状态徽章 —— 用户能一眼看
+                出当前哪些高级项已经在生效（API 密钥已填 / 词典 N 条 / 整理模型已改
+                / 整理强度非默认）。展开时不显，避免视觉干扰。 */}
+            {!advanced && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {advancedBadges(draft).map((b) => (
+                  <span
+                    key={b}
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-signal-500/40 text-signal-500"
+                  >
+                    {b}
+                  </span>
+                ))}
+                {advancedBadges(draft).length === 0 && (
+                  <span className="text-xs text-ink-400">
+                    自带 API 密钥 · 模型 · 词典 · 自动清理
+                  </span>
+                )}
+              </div>
+            )}
           </button>
 
           {advanced && (
@@ -465,7 +514,7 @@ export default function SettingsSheet({
               {/* (v0.8.5 第三轮 Cut#6) 语言 picker 挪入高级——日常 auto 即最优 */}
               <TypelessCard>
                 <TypelessRow
-                  icon="🌐"
+                  iconNode={<Icon name="globe" />}
                   title="识别语言"
                   subtitle="默认自动适合中英混说；改单语在外文比例高时偶尔提升识别率"
                   trailing={
@@ -485,7 +534,7 @@ export default function SettingsSheet({
               {draft.engine !== "tititalk_cloud" && (
                 <TypelessCard>
                   <TypelessRow
-                    icon="🏷"
+                    iconNode={<Icon name="tag" />}
                     title="识别模型"
                     subtitle="留空走默认（百炼用 qwen3-asr-flash / OpenAI 用 whisper-1）"
                     trailing={
@@ -500,7 +549,7 @@ export default function SettingsSheet({
                     }
                   />
                   <TypelessRow
-                    icon="🔑"
+                    iconNode={<Icon name="key" />}
                     title="API 密钥"
                     subtitle="只存本地，不上传"
                     trailing={
@@ -518,7 +567,7 @@ export default function SettingsSheet({
 
               <TypelessCard>
                 <TypelessRow
-                  icon="✏︎"
+                  iconNode={<Icon name="edit" />}
                   title="整理模型"
                   subtitle="留空走 qwen-turbo；用了自带 API 密钥就走你的"
                   trailing={
@@ -534,7 +583,7 @@ export default function SettingsSheet({
                 {/* (v0.8.5 第三轮 Cut#8) 润色强度从主面挪进来——边界探索档 */}
                 {draft.stylist_enabled && (
                   <TypelessRow
-                    icon="🎚"
+                    iconNode={<Icon name="slider" />}
                     title="整理强度"
                     subtitle={
                       draft.polish_intensity === "light" ? "轻 · 只补标点 / 删口头禅" :
@@ -560,7 +609,7 @@ export default function SettingsSheet({
 
               <TypelessCard>
                 <TypelessRow
-                  icon="📖"
+                  iconNode={<Icon name="book" />}
                   title="词典 / 热词"
                   subtitle="一行一个；专有名词、人名、术语放这里"
                   trailing={null}
@@ -582,7 +631,7 @@ export default function SettingsSheet({
                 </div>
                 {/* (v0.8.4 P1-2) 词汇检测建议加词典 toggle + banner */}
                 <TypelessRow
-                  icon="✨"
+                  iconNode={<Icon name="sparkle" />}
                   iconColor="#F59E0B"
                   title="建议加词典"
                   subtitle="重复出现的英文术语攒满 3 次后，词典上方冒「+ 加进词典」"
@@ -648,6 +697,16 @@ export default function SettingsSheet({
   );
 }
 
+function pillThemeHint(theme: AppConfig["pill_theme"]): string {
+  switch (theme) {
+    case "annotation": return "暖黄便签贴桌角，仿宋体大字适合写作者";
+    case "telegraph":  return "屏幕底部一条 ticker，等宽字 + 状态电码，程序员路线";
+    case "seal":       return "朱砂方印「听 / 校 / 记」单字配题款，仪式感";
+    case "lantern":
+    default:           return "球形朱砂呼吸光晕；说话越大光越亮（默认）";
+  }
+}
+
 function hotkeyModeHint(mode: AppConfig["hotkey_mode"]): string {
   switch (mode) {
     case "push_to_talk":
@@ -675,6 +734,67 @@ function mouseSideLabel(n: number): string {
     case 2: return "侧键 2（前进）";
     default: return "";
   }
+}
+
+/// (v0.9 Editorial Chinese) 整理风格实时案例预览 —— 同一句口语 4 种 persona
+/// 处理结果对照。input 选用真实场景：带「呃」「然后」语气词 + 中英混 + 数字。
+/// 输出是手工硬编码（不是 LLM 实时跑），节省请求成本，4 个 persona 差异稳定可控。
+function PersonaPreview({
+  persona,
+}: {
+  persona: AppConfig["stylist_persona"];
+}) {
+  const input = "呃就是说 我们今天 review 一下那个 v0.9 release，然后 ETA 大概是 周五 5 点之前要把 changelog 搞定";
+  const outputs: Record<AppConfig["stylist_persona"], string> = {
+    friendly: "我们今天 review 一下 v0.9 release，周五五点前要把 changelog 搞定。",
+    formal: "请于本周五 17:00 前完成 v0.9 release review 与 changelog 整理。",
+    mixed_zh_en: "今天 review v0.9 release，周五 5 PM 前完成 changelog。",
+    code: "// review v0.9 release\n// deadline: Friday 5pm — finalize changelog",
+  };
+  const label: Record<AppConfig["stylist_persona"], string> = {
+    friendly: "友好口语",
+    formal: "正式书面",
+    mixed_zh_en: "中英混排",
+    code: "代码注释",
+  };
+  return (
+    <div className="rounded-lg border border-ink-200 bg-paper-warm/30 px-3 py-2.5 text-[12px] leading-relaxed">
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="font-mono text-[10px] tracking-widest text-signal-500 font-medium">
+          PREVIEW
+        </span>
+        <span className="text-ink-400">·</span>
+        <span className="font-serif text-[12px] font-medium text-ink-800">
+          {label[persona]}
+        </span>
+      </div>
+      <div className="text-ink-400 line-through decoration-ink-300 mb-1.5">
+        {input}
+      </div>
+      <div className="font-serif text-ink-900 whitespace-pre-line">
+        {outputs[persona]}
+      </div>
+    </div>
+  );
+}
+
+/// (v0.9 Editorial Chinese) 高级 disclosure 折叠时显示的真实状态徽章。
+/// 哪些 power-user 设置已经被改过、就显示对应短标签。展开时不显（避免重复）。
+function advancedBadges(draft: AppConfig): string[] {
+  const out: string[] = [];
+  if (draft.api_key && draft.api_key.trim().length > 0) out.push("自带密钥");
+  if (draft.dictionary && draft.dictionary.length > 0) out.push(`词典 ${draft.dictionary.length} 条`);
+  if (draft.model && draft.model.trim().length > 0) out.push(`识别模型 ${shortModel(draft.model)}`);
+  if (draft.stylist_model && draft.stylist_model.trim().length > 0) out.push(`整理模型 ${shortModel(draft.stylist_model)}`);
+  if (draft.polish_intensity && draft.polish_intensity !== "normal") out.push(`整理 ${draft.polish_intensity === "light" ? "轻" : "重"}`);
+  if (draft.language && draft.language !== "auto") out.push(`语言 ${draft.language === "zh" ? "中文" : "英文"}`);
+  return out;
+}
+
+function shortModel(m: string): string {
+  // 长 model name 截到 ≤14 字符，免徽章撑爆
+  if (m.length <= 14) return m;
+  return m.slice(0, 13) + "…";
 }
 
 /// 自定义 Switch（rangify 浏览器原生 checkbox 看着像移动端开关）。

@@ -6,14 +6,20 @@ import type { ReactNode } from "react";
 ///
 /// `icon` 接收单字 / emoji（默认 indigo 渐变 badge），`iconColor` 用 hex 染 badge：
 /// 例如 `iconColor="#EC4899"` → pink 风格栏目。
+///
+/// (v0.9 Editorial Chinese) 新增 `iconNode` —— 1.5px stroke 线性 SVG icon。
+/// 跟 emoji 二选一；emoji 留旧 row 兼容，新 row 优先用 iconNode 让设计统一
+/// 朴素，跟 Mac SF Symbols 美感一致。
 export function TypelessRow({
   icon,
+  iconNode,
   iconColor = "#6366F1",
   title,
   subtitle,
   trailing,
 }: {
   icon?: string;
+  iconNode?: ReactNode;
   iconColor?: string;
   title: string;
   subtitle?: string;
@@ -21,7 +27,7 @@ export function TypelessRow({
 }) {
   return (
     <div className="flex items-center gap-3.5 px-4 py-3.5">
-      {icon && (
+      {(iconNode || icon) && (
         <div
           className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[14px] font-semibold"
           style={{
@@ -29,7 +35,7 @@ export function TypelessRow({
             color: iconColor,
           }}
         >
-          {icon}
+          {iconNode ?? icon}
         </div>
       )}
       <div className="flex-1 min-w-0">

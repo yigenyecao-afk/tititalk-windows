@@ -47,7 +47,13 @@ export interface AppConfig {
   /// 话语言；非空（"English" / "日本語" / "中文" 等）→ polish 阶段把
   /// 最终结果翻成指定语言。
   output_language_override: string;
+  /// (v0.9.x Editorial Chinese) 录音浮窗主题。
+  /// "lantern" 灯笼（球形朱砂呼吸，默认）/ "annotation" 批注（便签纸）/
+  /// "telegraph" 电报（屏幕底 ticker）/ "seal" 印章（朱砂方印章）。
+  pill_theme: PillTheme;
 }
+
+export type PillTheme = "lantern" | "annotation" | "telegraph" | "seal";
 
 export type PolishIntensity = "light" | "normal" | "heavy";
 

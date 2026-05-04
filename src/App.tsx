@@ -276,8 +276,10 @@ export default function App() {
               account={account}
               phase={phase}
               lastError={lastError}
+              recent={recent}
               onGoSettings={() => setShowSettings(true)}
               onGoAccount={() => setShowAccount(true)}
+              onGoHistory={() => setTab("history")}
               onDismissError={() => setLastError("")}
               onPatchCfg={async (patch) => {
                 const next = { ...cfg, ...patch };
@@ -861,14 +863,16 @@ function HomeStylePicker({
 }
 
 function HomePane({
-  cfg, account, phase, lastError, onGoSettings, onGoAccount, onDismissError, onPatchCfg,
+  cfg, account, phase, lastError, recent, onGoSettings, onGoAccount, onGoHistory, onDismissError, onPatchCfg,
 }: {
   cfg: AppConfig;
   account: AccountSnapshot | null;
   phase: PipelinePhase;
   lastError: string;
+  recent: { at: string; text: string }[];
   onGoSettings: () => void;
   onGoAccount: () => void;
+  onGoHistory: () => void;
   onDismissError: () => void;
   onPatchCfg: (patch: Partial<AppConfig>) => void;
 }) {
@@ -932,19 +936,103 @@ function HomePane({
     try { await forceStop(); } catch (e) { console.warn("forceStop:", e); }
   }
 
+  // (v0.9 Editorial Chinese) HomeView 改造 —— 跟 Mac HomeView.swift 的
+  // editorialHero / dailyTimeline / recentBubbles 同源。
+  // 数据有限：Win 历史只持久化 {at,text}，没有 durationMs，所以 hero 用「段
+  // 数 + 字符数」代替 Mac 的「分钟数」；24h timeline 用 session count 桶代
+  // 替 audio-minutes 桶；语义一致。
+  const today = new Date();
+  const isToday = (iso: string) => {
+    const d = new Date(iso);
+    return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+  };
+  const todayItems = recent.filter((it) => isToday(it.at));
+  const todaySegments = todayItems.length;
+  const todayChars = todayItems.reduce((acc, it) => acc + (it.text?.length ?? 0), 0);
+  // 24-bucket histogram by hour of day
+  const hourBuckets = useMemo(() => {
+    const arr = new Array(24).fill(0) as number[];
+    for (const it of todayItems) {
+      const h = new Date(it.at).getHours();
+      if (h >= 0 && h < 24) arr[h]++;
+    }
+    const max = Math.max(1, ...arr);
+    return arr.map((v) => v / max); // normalized 0..1
+  }, [todayItems]);
+
   return (
     <div className="max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">{hotkeyVerb} {hotkeyLabel} 说话</h1>
-        <p className="text-ink-500 mt-1 text-sm">
-          {cfg.hotkey_mode === "toggle"
-            ? "再按一次结束并自动转写、插入到光标处。"
-            : "松开自动转写并插入到光标处。"}
-          微信、邮件、IDE、Notion 都能用。
-        </p>
-      </div>
+      {/* (v0.9 editorial) Hero —— 章节 eyebrow + 宋体大字 metric + 仿宋 caption + 当前热键 chip */}
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="font-mono text-[10px] tracking-[0.3em] text-signal-500 font-medium">
+            CHAPTER · 今日
+          </span>
+          <div className="flex-1 h-px bg-ink-200" />
+          <span className="font-mono text-[10px] tracking-[0.15em] text-ink-500 uppercase">
+            {phaseLabel(phase)}
+          </span>
+        </div>
+        <div className="flex items-baseline gap-3 mb-2 flex-wrap">
+          {todaySegments > 0 ? (
+            <>
+              <span className="font-serif text-[56px] leading-none font-semibold text-ink-900 tabular-nums">
+                {todayChars.toLocaleString("zh-CN")}
+              </span>
+              <span className="font-serif text-[18px] text-ink-500">字 · {todaySegments} 段</span>
+            </>
+          ) : (
+            <span className="font-serif text-[40px] leading-tight font-medium text-ink-700">
+              今天还没说话
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap text-[12px] text-ink-500 font-mono">
+          <span>{hotkeyVerb} {hotkeyLabel} 即可开口</span>
+          <span className="text-ink-300">·</span>
+          <span>{cfg.hotkey_mode === "toggle" ? "再按一次结束" : "松开自动转写"}</span>
+          <div className="flex-1" />
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-signal-500/40 text-signal-500 text-[11px]">
+            <span className="text-ink-500 font-mono text-[10px] tracking-wider">按住</span>
+            <span className="font-medium">{hotkeyLabel}</span>
+          </span>
+        </div>
+      </section>
 
       <HomeQuotaCard account={account} onUpgrade={onGoAccount} />
+
+      {/* (v0.9 editorial) 24h 时间轴 —— 替换之前 4 张 stat card。一眼看出今日
+          说话的时间分布。点「全部」跳到 history pane。 */}
+      <section className="rounded-xl border border-ink-200 bg-white p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="font-serif text-[14px] font-semibold text-ink-900">今日时间轴</span>
+          <span className="font-mono text-[11px] text-ink-400">/ 0:00 ─ 24:00</span>
+          <div className="flex-1" />
+          <button onClick={onGoHistory} className="font-mono text-[11px] text-ink-500 hover:text-signal-500">
+            全部 →
+          </button>
+        </div>
+        <div className="flex items-end gap-px h-8 mb-1">
+          {hourBuckets.map((v, h) => {
+            const has = v > 0;
+            return (
+              <div key={h} className="flex-1 relative h-full bg-ink-100/60 rounded-sm overflow-hidden">
+                <div
+                  className={"absolute left-0 right-0 bottom-0 " + (has ? "bg-signal-500/85" : "bg-signal-500/15")}
+                  style={{ height: `${Math.max(6, v * 100)}%` }}
+                />
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex font-mono text-[9px] text-ink-300">
+          <span className="flex-1 text-left">00</span>
+          <span className="flex-1 text-center">06</span>
+          <span className="flex-1 text-center">12</span>
+          <span className="flex-1 text-center">18</span>
+          <span className="flex-1 text-right">24</span>
+        </div>
+      </section>
 
       <HomeStylePicker cfg={cfg} onPatch={onPatchCfg} />
 
@@ -1010,16 +1098,54 @@ function HomePane({
         onMouseLeave={handleMouseUp}
       />
 
-      <div className="grid grid-cols-2 gap-4">
-        <Card title="当前热键" body={hotkeyLabel} />
-        <Card title="识别引擎" body={engineLabel} />
-        <Card title="语言" body={cfg.language === "zh" ? "中文" : cfg.language === "en" ? "英文" : "自动"} />
-        <Card title="自动插入" body={cfg.auto_insert ? "已启用" : "仅复制到剪贴板"} />
-      </div>
+      {/* (v0.9 editorial) 最近 3 条 —— 砍掉旧的 4 张状态 Card（信息冗余 ——
+          热键/引擎/语言已经在 hero 跟 settings 里）；改成「文章片段」气泡，
+          2px 朱砂 leading bar + 宋体 14px preview。点跳到 history。 */}
+      {recent.length > 0 && (
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-mono text-[10px] tracking-[0.3em] text-signal-500 font-medium">
+              CHAPTER · 最近
+            </span>
+            <div className="flex-1 h-px bg-ink-200" />
+            <button onClick={onGoHistory} className="font-mono text-[11px] text-ink-500 hover:text-signal-500">
+              全部 →
+            </button>
+          </div>
+          {recent.slice(0, 3).map((it, i) => {
+            const t = new Date(it.at);
+            const time = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+            const date = isToday(it.at) ? "今天" : `${t.getMonth() + 1} 月 ${t.getDate()} 日`;
+            const preview = (it.text ?? "").trim().slice(0, 80);
+            return (
+              <button
+                key={i}
+                onClick={onGoHistory}
+                className="w-full text-left flex gap-3 px-3 py-2.5 rounded-md hover:bg-paper-warm/40 transition group"
+              >
+                <div className="w-[2px] bg-signal-500/80 rounded-full self-stretch shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 font-mono text-[10px] text-ink-400">
+                    <span>{date}</span>
+                    <span>·</span>
+                    <span>{time}</span>
+                  </div>
+                  <div className="font-serif text-[14px] leading-[1.65] text-ink-800 line-clamp-2">
+                    {preview || <span className="text-ink-400">（空）</span>}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </section>
+      )}
 
-      <div className="text-sm text-ink-500 flex items-center gap-3">
-        <span>想换热键、API key 或语言？</span>
-        <button onClick={onGoSettings} className="text-indigo-600 hover:underline">去设置 →</button>
+      <div className="text-sm text-ink-500 flex items-center gap-3 pt-2 border-t border-ink-100">
+        <span className="font-mono text-[11px] uppercase tracking-wider">{engineLabel}</span>
+        <div className="flex-1" />
+        <button onClick={onGoSettings} className="font-mono text-[11px] text-ink-500 hover:text-signal-500">
+          调整设置 →
+        </button>
       </div>
     </div>
   );
@@ -1135,16 +1261,6 @@ function Banner({
   );
 }
 
-function Card({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="rounded-lg border border-ink-200 bg-white p-4">
-      <div className="text-xs text-ink-400">{title}</div>
-      <div className="text-base font-medium text-ink-900 mt-1">{body}</div>
-    </div>
-  );
-}
-
-
 function HistoryPane({
   items,
   onClear,
@@ -1180,33 +1296,51 @@ function HistoryPane({
   if (items.length === 0) {
     return (
       <div className="max-w-2xl">
-        <h1 className="text-2xl font-semibold">历史</h1>
-        <p className="text-ink-500 mt-2 text-sm">
-          按住热键说话后，转写会自动保存到本地（JSONL，可在「设置 · 历史清理」开启自动清理）。
+        <div className="font-mono text-[10px] tracking-[0.3em] text-signal-500 font-medium mb-2">
+          ARCHIVE · 历史
+        </div>
+        <h1 className="font-serif text-[40px] leading-tight font-medium text-ink-700">
+          还没说过话
+        </h1>
+        <p className="text-ink-500 mt-3 text-sm leading-relaxed max-w-md">
+          按住热键说话后，转写会自动收进这里。本地 JSONL 存储；可在「设置 · 高级 · 自动清理」打开 30 天滚动删除。
         </p>
       </div>
     );
   }
   return (
-    <div className="max-w-2xl space-y-3">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">历史（{items.length} 条）</h1>
+    <div className="max-w-3xl">
+      {/* (v0.9 Editorial Chinese) 编辑器化档案 —— 章节 eyebrow + 宋体大字
+          metric + monospaced 副标题；砍掉旧 「历史（N 条）」按钮卡组。 */}
+      <header className="mb-6 flex items-end gap-4">
+        <div className="flex-1">
+          <div className="font-mono text-[10px] tracking-[0.3em] text-signal-500 font-medium mb-2">
+            ARCHIVE · 已记
+          </div>
+          <h1 className="font-serif text-[44px] leading-none font-semibold text-ink-900 tabular-nums">
+            {items.length.toLocaleString("zh-CN")}
+            <span className="font-serif text-[18px] text-ink-500 font-normal ml-2">篇</span>
+          </h1>
+          <div className="font-mono text-[11px] text-ink-400 mt-2">
+            最近 {Math.min(50, items.length)} 篇 · 本地 JSONL
+          </div>
+        </div>
         <button
           type="button"
-          className="text-sm px-3 py-1.5 rounded border border-ink-300 hover:bg-ink-50 disabled:opacity-40"
+          className="font-mono text-[11px] tracking-wider px-3 py-1.5 rounded border border-ink-200 text-ink-500 hover:text-signal-500 hover:border-signal-500/40 disabled:opacity-40"
           disabled={busy}
           onClick={() => setConfirmOpen(true)}
         >
           清空全部
         </button>
-      </div>
+      </header>
       {confirmOpen && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+        <div className="mb-4 rounded-md border border-signal-500/40 bg-signal-100/40 p-3 text-sm text-signal-600">
           <div>确定清空所有本地历史？此操作不可恢复。</div>
           <div className="mt-2 flex gap-2">
             <button
               type="button"
-              className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+              className="px-3 py-1 rounded bg-signal-500 text-white hover:bg-signal-600 disabled:opacity-50"
               disabled={busy}
               onClick={handleClear}
             >
@@ -1222,12 +1356,30 @@ function HistoryPane({
           </div>
         </div>
       )}
-      {items.map((it, i) => (
-        <div key={i} className="rounded-lg border border-ink-200 bg-white p-3">
-          <div className="text-[11px] text-ink-400">{new Date(it.at).toLocaleString()}</div>
-          <div className="text-sm text-ink-900 mt-1">{it.text}</div>
-        </div>
-      ))}
+      <div className="divide-y divide-ink-100">
+        {items.map((it, i) => {
+          const t = new Date(it.at);
+          const time = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+          const date = `${t.getFullYear()}.${String(t.getMonth() + 1).padStart(2, "0")}.${String(t.getDate()).padStart(2, "0")}`;
+          return (
+            <article key={i} className="flex gap-3 py-4 group">
+              <div className="w-[2px] bg-signal-500/70 group-hover:bg-signal-500 self-stretch shrink-0 rounded-full transition-colors" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1.5 font-mono text-[10px] tracking-wider text-ink-400">
+                  <span>{date}</span>
+                  <span>·</span>
+                  <span>{time}</span>
+                  <span>·</span>
+                  <span className="tabular-nums">{(it.text ?? "").length} 字</span>
+                </div>
+                <div className="font-serif text-[15px] leading-[1.75] text-ink-900 whitespace-pre-wrap break-words">
+                  {it.text}
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
     </div>
   );
 }
