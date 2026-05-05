@@ -139,3 +139,18 @@ echo "   latest  → https://tititalk.com/downloads/TiTiTalk-windows-latest.exe"
 echo "   meta    → https://tititalk.com/downloads/windows-latest.json"
 echo "   updater → https://tititalk.com/downloads/windows-update.json"
 echo "   sha256  → $SHA256"
+
+# Sync to public mirror (yigenyecao-afk/tititalk-downloads). Mac repo holds
+# sync-mirror.sh — assume it's at the conventional sibling path. Best-effort.
+# (NOW.md §10 #11, first surfaced 2026-05-05.) ZIP auto-derived from EXE.
+SYNC_MIRROR="${SYNC_MIRROR:-$HOME/Documents/voiceink/scripts/sync-mirror.sh}"
+if [[ -x "$SYNC_MIRROR" ]]; then
+    echo ""
+    echo "==> 同步到 mirror repo (pages / jsdelivr / github 直链)"
+    bash "$SYNC_MIRROR" "" "$LOCAL_EXE" "" || \
+        echo "   ⚠️  mirror 同步失败但官网 CDN 已上 — 手动跑 bash $SYNC_MIRROR \"\" $LOCAL_EXE"
+else
+    echo ""
+    echo "⚠️  跳过 mirror 同步：sync-mirror.sh 不在 $SYNC_MIRROR — pages/jsdelivr/github 三渠道仍卡旧版"
+    echo "   手动跑：bash ~/Documents/voiceink/scripts/sync-mirror.sh \"\" $LOCAL_EXE"
+fi
