@@ -24,6 +24,7 @@ import ConflictDialog from "./components/ConflictDialog";
 import SettingsSheet from "./components/SettingsSheet";
 import AccountSheet from "./components/AccountSheet";
 import OnboardingRoleSheet from "./components/OnboardingRoleSheet";
+import { findRole, getCachedRoles, type Role as RoleMeta } from "./lib/role-catalog";
 import HistoryQuotaBanner from "./components/HistoryQuotaBanner";
 import {
   getAccountState,
@@ -337,6 +338,25 @@ function planChip(account: AccountSnapshot | null): string {
   if (plan.includes("flagship")) return "旗舰";
   if (plan.includes("pro"))      return "Pro";
   return "Free";
+}
+
+/// HomePane eyebrow 角色 chip —— authenticated + role 非空才显示。
+/// 静态 indicator（决策 #3：不在快捷面板上加切换），点击/编辑要去 Account。
+function currentRoleBadge(account: AccountSnapshot | null) {
+  if (account?.state.kind !== "authenticated") return null;
+  const roleId = account.state.user.role;
+  if (!roleId) return null;
+  const meta: RoleMeta | null = findRole(roleId, getCachedRoles());
+  if (!meta) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-ink-200 text-ink-600"
+      title={`当前角色：${meta.title} — 影响 ASR 词包 + 润色提示词。改在「账户」`}
+    >
+      <span className="text-[11px] leading-none">{meta.emoji}</span>
+      <span className="font-mono text-[10px] tracking-[0.15em] font-medium">{meta.title}</span>
+    </span>
+  );
 }
 
 function SidebarIconBtn({
@@ -968,6 +988,7 @@ function HomePane({
           <span className="font-mono text-[10px] tracking-[0.3em] text-signal-500 font-medium">
             CHAPTER · 今日
           </span>
+          {currentRoleBadge(account)}
           <div className="flex-1 h-px bg-ink-200" />
           <span className="font-mono text-[10px] tracking-[0.15em] text-ink-500 uppercase">
             {phaseLabel(phase)}
