@@ -16,6 +16,7 @@ export default defineConfig({
         main: "index.html",
         pill: "pill.html",
         assistant: "assistant.html",
+        companion: "companion.html",
       },
     },
   },

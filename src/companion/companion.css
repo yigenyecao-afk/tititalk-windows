@@ -1,0 +1,219 @@
+/* Wave 4 — companion 透明窗口样式。
+ * companion.html body 已 transparent；这里把 stage 居中，
+ * 留 8px padding 给 bubble 跟 overlay 不被裁。 */
+
+.companion-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.pet-root {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  cursor: grab;
+}
+.pet-root:active {
+  cursor: grabbing;
+}
+
+/* Drop shadow ellipse 投影 */
+.pet-shadow {
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  width: 70%;
+  height: 14px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.28) 0%, rgba(0, 0, 0, 0) 70%);
+  pointer-events: none;
+}
+
+.pet-sprite {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-repeat: no-repeat;
+}
+
+.pet-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 22px;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+}
+
+/* ---- emoji fallback —— sprite 不存在时的渲染 ----------------------- */
+
+.emoji-pet {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform-origin: 50% 100%;
+  font-size: 80px;
+  line-height: 1;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.18));
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: translateX(-50%) scale(0.97); }
+  50%      { transform: translateX(-50%) scale(1.04); }
+}
+@keyframes wiggle {
+  0%, 100% { transform: translateX(-50%) rotate(-8deg); }
+  50%      { transform: translateX(-50%) rotate(8deg); }
+}
+@keyframes bob {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50%      { transform: translateX(-50%) translateY(-6px); }
+}
+@keyframes hop {
+  0%   { transform: translateX(-50%) translateY(0); }
+  35%  { transform: translateX(-50%) translateY(-22px); }
+  70%  { transform: translateX(-50%) translateY(-2px); }
+  100% { transform: translateX(-50%) translateY(0); }
+}
+@keyframes droop {
+  0%, 100% { transform: translateX(-50%) translateY(2px) rotate(-3deg); filter: grayscale(0.4) drop-shadow(0 4px 8px rgba(0,0,0,0.18)); }
+  50%      { transform: translateX(-50%) translateY(4px) rotate(3deg);  filter: grayscale(0.4) drop-shadow(0 4px 8px rgba(0,0,0,0.18)); }
+}
+@keyframes nap {
+  0%, 100% { transform: translateX(-50%) scale(0.92); opacity: 0.65; }
+  50%      { transform: translateX(-50%) scale(0.95); opacity: 0.8; }
+}
+@keyframes ponder {
+  0%   { transform: translateX(-50%) rotate(0deg); }
+  25%  { transform: translateX(-50%) rotate(-6deg); }
+  75%  { transform: translateX(-50%) rotate(6deg); }
+  100% { transform: translateX(-50%) rotate(0deg); }
+}
+
+.anim-idle          { animation: breathe 2.4s ease-in-out infinite; transform: translateX(-50%); }
+.anim-waving        { animation: wiggle 0.55s ease-in-out infinite; transform: translateX(-50%); }
+.anim-running       { animation: bob 0.5s ease-in-out infinite;   transform: translateX(-50%); }
+.anim-running-right { animation: bob 0.5s ease-in-out infinite;   transform: translateX(-50%) scaleX(1); }
+.anim-running-left  { animation: bob 0.5s ease-in-out infinite;   transform: translateX(-50%) scaleX(-1); }
+.anim-jumping       { animation: hop 1.1s ease-out infinite;      transform: translateX(-50%); }
+.anim-failed        { animation: droop 1.4s ease-in-out infinite; }
+.anim-waiting       { animation: nap 3.2s ease-in-out infinite; }
+.anim-review        { animation: ponder 1.4s ease-in-out infinite; }
+
+/* ---- Bubble 气泡 -------------------------------------------------- */
+
+.pet-bubble {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 14em;
+  background: white;
+  color: #1f1f1f;
+  border: 1.5px solid rgba(255, 122, 0, 0.55); /* signal-orange */
+  border-radius: 14px;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  font-family: "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  animation: bubble-rise 0.32s ease-out;
+  white-space: pre-wrap;
+  text-align: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.pet-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-right: 1.5px solid rgba(255, 122, 0, 0.55);
+  border-bottom: 1.5px solid rgba(255, 122, 0, 0.55);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+@keyframes bubble-rise {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ---- 右键菜单 ----------------------------------------------------- */
+
+.pet-menu {
+  position: absolute;
+  width: 160px;
+  background: white;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  z-index: 10;
+  animation: bubble-rise 0.12s ease-out;
+}
+.pet-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #1f1f1f;
+  font-family: inherit;
+}
+.pet-menu button:hover {
+  background: rgba(255, 122, 0, 0.10);
+}
+.pet-menu button.danger:hover {
+  background: rgba(220, 38, 38, 0.10);
+  color: #b91c1c;
+}
+
+/* ---- 专心模式 25min 倒计时 ----------------------------------------- */
+
+.focus-pulse {
+  animation: focus-glow 2.4s ease-in-out infinite;
+}
+@keyframes focus-glow {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(255, 122, 0, 0.4)); }
+  50%      { filter: drop-shadow(0 0 12px rgba(255, 122, 0, 0.6)); }
+}
+
+.focus-timer {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 11px;
+  color: rgba(255, 122, 0, 0.9);
+  background: white;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 122, 0, 0.55);
+  pointer-events: none;
+}
+
+/* dark mode 适配 — 系统级 prefers-color-scheme */
+@media (prefers-color-scheme: dark) {
+  .pet-bubble { background: #1f1f1f; color: #f1f1f1; border-color: rgba(255, 154, 65, 0.6); }
+  .pet-bubble::after { background: #1f1f1f; border-color: rgba(255, 154, 65, 0.6); }
+}

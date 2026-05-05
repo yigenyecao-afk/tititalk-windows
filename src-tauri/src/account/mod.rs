@@ -104,6 +104,14 @@ impl Account {
     pub(crate) fn app_handle(&self) -> &AppHandle {
         &self.handle
     }
+
+    /// (P0 wave 3) ApiClient 暴露 —— wave 3 多个 endpoint（personalization /
+    /// app_persona_rules / repolish / meetings 等）走同一个鉴权 / refresh /
+    /// X-User-Plan tap 链路，没必要再起一份。`pub(crate)` 限制只供同 crate
+    /// 的 thin command wrappers 用。
+    pub(crate) fn api(&self) -> &api_client::ApiClient {
+        &self.api
+    }
 }
 
 impl Account {

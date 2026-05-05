@@ -385,6 +385,43 @@ pub fn preflight_microphone() -> Result<(), String> {
     Ok(())
 }
 
+/// (P1 hotkey→partial 加速 2026-05-05) 后台预热 cpal/WASAPI 子系统。
+///
+/// Windows 上首次调 `cpal::default_host().default_input_device()` 要做：
+///   1. COM init 进 MTA（之前没初始化的话）
+///   2. 创建 IMMDeviceEnumerator → 查询默认 capture endpoint
+///   3. 加载 WASAPI driver（声卡 driver 冷加载 ~30-100ms 不等）
+///   4. 缓存 IAudioClient（cpal 内部 Drop 后下次建 stream 还能复用 driver-loaded 状态）
+/// 第一次冷启动总成本 ~50-300ms，预热后 default_input_device + default_input_config
+/// 落到 <5ms，省掉用户按 hotkey 时的同步等待。
+///
+/// **不调** `device.build_input_stream(...)` —— 那会真打开 WASAPI capture session
+/// （占设备 handle、可能跟用户其它录音 app 冲突），prewarm 不该承担副作用。
+///
+/// 在 lib.rs setup 阶段 spawn_blocking 跑（cpal 是 blocking API，不能直接 .await）。
+/// 失败 silent —— prewarm 是 best-effort，失败时下次 hotkey 走冷路径，行为兼容。
+pub fn prewarm_audio_device() {
+    let host = cpal::default_host();
+    let dev = match host.default_input_device() {
+        Some(d) => d,
+        None => {
+            log::debug!("audio prewarm: no default input device, skipping");
+            return;
+        }
+    };
+    match dev.default_input_config() {
+        Ok(cfg) => {
+            log::info!(
+                "audio device prewarmed: sr={}, ch={}, fmt={:?}",
+                cfg.sample_rate().0, cfg.channels(), cfg.sample_format()
+            );
+        }
+        Err(e) => {
+            log::debug!("audio prewarm: default_input_config failed: {e}");
+        }
+    }
+}
+
 fn capture_blocking(
     stop_flag: Arc<Mutex<bool>>,
     event_tx: tokio::sync::mpsc::UnboundedSender<PipelineEvent>,

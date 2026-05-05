@@ -15,6 +15,13 @@ import {
 } from "./TypelessRow";
 import { Icon } from "./Icon";
 
+const CHATTINESS_LABELS: Record<number, string> = {
+  0: "0 · 静音 — 只动作不说话",
+  1: "1 · 只关键事件（破纪录 / 配额警告 / 错误）",
+  2: "2 · 偶发 + 关键（默认）",
+  3: "3 · 频繁 — 喜欢热闹时打开",
+};
+
 /// Typeless 风设置 sheet — 跟 Mac TypelessSettingsSheet 一一对应。
 /// 6 sections：听写 / 快捷键 / 风格 / 隐私 / 提示音 / 高级（默认收起）。
 /// 每行配「小白能看懂的副标题」；BYOK / 词典 / 自动清理这种偏 power-user 的
@@ -478,6 +485,67 @@ export default function SettingsSheet({
           </TypelessCard>
         </section>
 
+        {/* Wave 4 — 桌面宠物 */}
+        <section>
+          <TypelessSectionHeader title="桌面宠物" subtitle="像 typeless 那样陪着你工作的小伙伴" />
+          <TypelessCard>
+            <TypelessRow
+              iconNode={<span className="text-lg">🐾</span>}
+              iconColor="#FB923C"
+              title="启用桌面宠物"
+              subtitle="一只浮在屏幕角落的小动物，看着你说话/切应用/熬夜"
+              trailing={
+                <Switch
+                  checked={draft.companion_enabled}
+                  onChange={(v) => patch("companion_enabled", v)}
+                />
+              }
+            />
+            {draft.companion_enabled && (
+              <>
+                <TypelessRow
+                  iconNode={<span className="text-lg">🦦</span>}
+                  iconColor="#FB923C"
+                  title="选择伙伴"
+                  subtitle="5 只各有性格 — 风格匹配你的整理人格"
+                  trailing={
+                    <select
+                      value={draft.companion_pet_slug}
+                      onChange={(e) => patch("companion_pet_slug", e.target.value)}
+                      className="rounded-md border border-ink-200 bg-white px-2 py-1 text-sm"
+                    >
+                      <option value="boba">🦦 Boba · 慵懒水獭</option>
+                      <option value="byte-bunny">🐰 Byte Bunny · 程序员兔</option>
+                      <option value="boxcat">📦 Boxcat · 顽皮纸箱猫</option>
+                      <option value="punchy">🥊 Punchy · 硬汉拳击狗</option>
+                      <option value="scoop">🍦 Scoop · 阳光甜筒</option>
+                    </select>
+                  }
+                />
+                <TypelessRow
+                  iconNode={<span className="text-lg">💬</span>}
+                  iconColor="#FB923C"
+                  title="话痨度"
+                  subtitle={CHATTINESS_LABELS[draft.companion_chattiness]}
+                  trailing={
+                    <input
+                      type="range"
+                      min={0}
+                      max={3}
+                      step={1}
+                      value={draft.companion_chattiness}
+                      onChange={(e) =>
+                        patch("companion_chattiness", Number(e.target.value) as 0 | 1 | 2 | 3)
+                      }
+                      className="w-32"
+                    />
+                  }
+                />
+              </>
+            )}
+          </TypelessCard>
+        </section>
+
         {/* 高级 disclosure */}
         <section>
           <button
@@ -526,6 +594,8 @@ export default function SettingsSheet({
                       <option value="auto">自动</option>
                       <option value="zh">中文</option>
                       <option value="en">英文</option>
+                      <option value="yue">粤语</option>
+                      <option value="yue_zh">粤+普</option>
                     </select>
                   }
                 />

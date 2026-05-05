@@ -1,6 +1,6 @@
 [package]
 name = "tititalk"
-version = "0.9.2"
+version = "0.10.0"
 description = "TiTiTalk Windows — voice-to-text input"
 authors = ["TiTiTalk"]
 edition = "2021"
@@ -48,6 +48,11 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # Audio capture (WASAPI on Windows)
 cpal = "0.15"
 
+# P0 wave 3 #9 — 批量音频文件解码（mp3 / m4a / opus / wav 等 → 16k mono i16 PCM）
+# 用 symphonia 是因为 hound 只能 WAV，其它常见格式都靠这个；feature 列表挑解
+# 码器避免拉满整个 codec 池让 binary 膨胀。
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "isomp4", "aac", "wav", "flac", "vorbis"] }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
@@ -66,6 +71,9 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
     "Win32_UI_Accessibility",
     "Win32_Graphics_Gdi",
+    # P0 wave 3 #2 #12 — 前台窗口/进程查询（GetForegroundWindow + QueryFullProcessImageName）
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
 ] }
 
 [features]

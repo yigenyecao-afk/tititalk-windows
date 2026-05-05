@@ -51,6 +51,12 @@ export interface AppConfig {
   /// "lantern" 灯笼（球形朱砂呼吸，默认）/ "annotation" 批注（便签纸）/
   /// "telegraph" 电报（屏幕底 ticker）/ "seal" 印章（朱砂方印章）。
   pill_theme: PillTheme;
+  /// Wave 4 — 桌面宠物开关，默认 OFF。
+  companion_enabled: boolean;
+  /// Wave 4 — 当前选中的宠物 slug（boba/byte-bunny/boxcat/punchy/scoop）。
+  companion_pet_slug: string;
+  /// Wave 4 — 宠物话痨度：0=静音 / 1=只关键事件 / 2=偶发+关键 (默认) / 3=频繁。
+  companion_chattiness: 0 | 1 | 2 | 3;
 }
 
 export type PillTheme = "lantern" | "annotation" | "telegraph" | "seal";

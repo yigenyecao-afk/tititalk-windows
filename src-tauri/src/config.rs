@@ -124,6 +124,16 @@ pub struct AppConfig {
     /// 旧 key (typeless/mono/aurora/titi) 已移除 — 新装直接 lantern。
     #[serde(default = "default_pill_theme")]
     pub pill_theme: String,
+    /// Wave 4 — 桌面宠物开关。默认 OFF（不主动给用户挂浮窗）。
+    #[serde(default = "no")]
+    pub companion_enabled: bool,
+    /// Wave 4 — 当前选中的宠物 slug（pets.json `pets[].slug`）。默认 boba。
+    #[serde(default = "default_companion_slug")]
+    pub companion_pet_slug: String,
+    /// Wave 4 — 话痨度 0-3。0=静音 / 1=只关键事件 / 2=偶发 + 关键 (默认) /
+    /// 3=频繁。控制 PetBubble 的触发频次。
+    #[serde(default = "default_companion_chattiness")]
+    pub companion_chattiness: u8,
 }
 
 fn default_engine() -> String { "tititalk_cloud".into() }
@@ -159,6 +169,8 @@ fn default_mouse_side_button() -> u32 { 0 }
 fn default_translation_target() -> String { "English".into() }
 fn default_output_language_override() -> String { String::new() }
 fn default_pill_theme() -> String { "lantern".into() }
+fn default_companion_slug() -> String { "boba".into() }
+fn default_companion_chattiness() -> u8 { 2 }
 fn yes() -> bool { true }
 fn no() -> bool { false }
 
@@ -196,6 +208,9 @@ impl Default for AppConfig {
             assistant_hotkey_enabled: true,
             output_language_override: default_output_language_override(),
             pill_theme: default_pill_theme(),
+            companion_enabled: false,
+            companion_pet_slug: default_companion_slug(),
+            companion_chattiness: default_companion_chattiness(),
         }
     }
 }

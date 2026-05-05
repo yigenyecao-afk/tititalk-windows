@@ -95,6 +95,17 @@ async fn prepare_and_run(
     let event_tx_clear = state.event_tx.clone();
     // (v0.8.3 P0-1) 提前抓一些字段用于失败友好提示
     let cfg_for_hint = state.config.read().clone();
+
+    // (P1 hotkey→partial 加速 2026-05-05) 优先用 prewarmer 已经 ready 的 session
+    // — 省 500-1500ms ticket fetch + WS handshake + 等 dashscope ready。失败
+    // silently 走原冷连路径，行为兼容旧服务端。
+    if let Some(warm_session) = crate::asr_prewarm::try_acquire(&state).await {
+        log::info!("ASR using prewarmed session (cold-connect saved)");
+        // prewarm session 已经 ready，pill 不进 connecting 状态
+        let _ = event_tx_clear.send(PipelineEvent::CloudConnecting { connecting: false });
+        return warm_session.run(pcm_rx, stop_rx).await;
+    }
+
     let session = match start_session(state, sample_rate).await {
         Ok(s) => s,
         Err(e) => {
@@ -121,18 +132,21 @@ async fn prepare_and_run(
 /// prepare 阶段的产物：握手好的 ws + event channel。run() 接 pcm_rx + stop_rx
 /// 跑主循环。把「握手」跟「主循环」拆开是为了让 caller 能在 prepare 期间已经
 /// 起 capture（pcm 进 unbounded channel buffer），ready 后 first iteration drain。
-struct StreamSession {
-    ws_sink: futures_util::stream::SplitSink<
+///
+/// (P1 hotkey→partial 加速 2026-05-05) pub(crate) — asr_prewarm 模块复用本结构
+/// 在用户按 hotkey 之前就把 start_session 跑完，把热 session 给 caller。
+pub(crate) struct StreamSession {
+    pub(crate) ws_sink: futures_util::stream::SplitSink<
         tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
         Message,
     >,
-    ws_stream: futures_util::stream::SplitStream<
+    pub(crate) ws_stream: futures_util::stream::SplitStream<
         tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     >,
-    event_tx: tokio::sync::mpsc::UnboundedSender<PipelineEvent>,
+    pub(crate) event_tx: tokio::sync::mpsc::UnboundedSender<PipelineEvent>,
 }
 
-async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Result<StreamSession> {
+pub(crate) async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Result<StreamSession> {
     // 1. 取 access token —— 没登录直接 fail
     let acc = state
         .account
@@ -230,7 +244,7 @@ async fn start_session(state: Arc<AppState>, sample_rate: u32) -> anyhow::Result
 
 impl StreamSession {
     /// 主循环：select! 轮询三个 source：pcm_rx / stop_rx / ws_stream。
-    async fn run(
+    pub(crate) async fn run(
         self,
         mut pcm_rx: mpsc::UnboundedReceiver<Vec<u8>>,
         stop_rx: oneshot::Receiver<()>,

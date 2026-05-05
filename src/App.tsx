@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import {
   checkMicrophone,
   clearHistory,
@@ -24,6 +26,13 @@ import ConflictDialog from "./components/ConflictDialog";
 import SettingsSheet from "./components/SettingsSheet";
 import AccountSheet from "./components/AccountSheet";
 import OnboardingRoleSheet from "./components/OnboardingRoleSheet";
+// P0 wave 3 components
+import { PersonalizationCard } from "./components/PersonalizationCard";
+import { CrossSearchSheet } from "./components/CrossSearchSheet";
+import { RepolishDialog } from "./components/RepolishDialog";
+import { MeetingProbeBanner } from "./components/MeetingProbeBanner";
+import { BatchTranscribePanel } from "./components/BatchTranscribePanel";
+import { startPersonaRouter } from "./lib/persona-router";
 import { findRole, getCachedRoles, fetchRoleCatalog, type Role as RoleMeta } from "./lib/role-catalog";
 import HistoryQuotaBanner from "./components/HistoryQuotaBanner";
 import {
@@ -66,6 +75,94 @@ export default function App() {
   /// 之前 const VERSION 跟 package.json/Cargo.toml/tauri.conf.json 四头
   /// 不同步过一次，发新版后 UI 还显示旧号。
   const [version, setVersion] = useState<string>("");
+  // P0 wave 3 — global Ctrl+K cross-history search + repolish dialog state +
+  //              batch-transcribe panel toggle
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [repolishOpen, setRepolishOpen] = useState(false);
+  const [repolishItems, setRepolishItems] = useState<{ id: string; text: string }[]>([]);
+  const [showBatchPanel, setShowBatchPanel] = useState(false);
+
+  // P0 wave 3 — global Ctrl+K (cross-history search) + start persona router
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    const stopRouter = startPersonaRouter();
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      stopRouter?.();
+    };
+  }, []);
+
+  // Wave 4 — companion 冷启动 + quota fan-out
+  useEffect(() => {
+    if (!cfg) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    let lastChars = 0;
+
+    (async () => {
+      // 冷启动：cfg.companion_enabled = true → 显示宠物窗口 + 推一次 cfg
+      if (cfg.companion_enabled) {
+        try {
+          await invoke("cmd_companion_show");
+          await emitTo("companion", "companion-config", { cfg });
+        } catch (e) {
+          console.warn("[companion] cold-start show failed:", e);
+        }
+      }
+
+      // 周期 60s 拉一次 daily_summary 喂宠物（仅登录态）。失败不抛。
+      const pump = async () => {
+        if (cancelled || !cfg.companion_enabled) return;
+        try {
+          const { getDailySummary } = await import("./lib/wave3-api");
+          const sum = await getDailySummary();
+          // localStorage 记 30 天最大字数 record；当日字数 > record 时也写回
+          const recKey = "companion:dayCharsRecord";
+          const stored = Number(window.localStorage.getItem(recKey) ?? "0");
+          const record = Math.max(stored, sum.chars);
+          if (sum.chars > stored) window.localStorage.setItem(recKey, String(record));
+          if (sum.chars !== lastChars) lastChars = sum.chars;
+          await emitTo("companion", "companion-quota", {
+            percent: sum.quota_used_pct,
+            day_chars: sum.chars,
+            day_chars_record: record,
+          });
+        } catch {
+          // 未登录 / 网络错误：safely 忽略；下次再试
+        }
+      };
+      pump();
+      timer = window.setInterval(pump, 60_000);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearInterval(timer);
+    };
+  }, [cfg?.companion_enabled, cfg?.companion_pet_slug, cfg?.companion_chattiness]);
+
+  // Wave 4 Stage 2 — 监听 companion 「走开」事件 → 把 cfg.companion_enabled 写回 false
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen("companion-go-away", async () => {
+      if (!cfg) return;
+      const next = { ...cfg, companion_enabled: false };
+      try {
+        await saveConfig(next);
+        setCfg(next);
+        await invoke("cmd_companion_hide");
+      } catch (e) {
+        console.warn("[companion] go-away handle failed:", e);
+      }
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, [cfg]);
 
   useEffect(() => {
     getConfig().then(setCfg).catch((e) => console.error(e));
@@ -210,8 +307,48 @@ export default function App() {
     <div className="min-h-screen flex flex-col">
       <UpdateBanner status={update} setStatus={setUpdate} />
       {upgrade && <UpgradeBanner reason={upgrade} onDismiss={() => setUpgrade(null)} />}
+      {/* P0 wave 3 #12 — 会议探针顶部 banner */}
+      <MeetingProbeBanner loggedIn={account?.state.kind === "authenticated"} />
       <ConflictDialog />
       <NoticeToast message={notice} />
+      {/* P0 wave 3 #13 — global Ctrl+K cross-history search sheet */}
+      <CrossSearchSheet
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onJump={() => setTab("history")}
+      />
+      {/* P0 wave 3 #43 — batch repolish dialog */}
+      <RepolishDialog
+        open={repolishOpen}
+        items={repolishItems}
+        onClose={() => setRepolishOpen(false)}
+        onComplete={(byId) => {
+          // 把 polished 文本写回 recent — 用户能立刻看到改写后的结果
+          setRecent((prev) =>
+            prev.map((r, idx) => {
+              const k = `${idx}`;
+              return byId[k] ? { ...r, text: byId[k] } : r;
+            })
+          );
+        }}
+      />
+      {/* P0 wave 3 #9 — batch audio transcribe panel (modal) */}
+      {showBatchPanel && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => setShowBatchPanel(false)}
+        >
+          <div
+            className="w-[640px] h-[560px] rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <BatchTranscribePanel
+              loggedIn={account?.state.kind === "authenticated"}
+              onClose={() => setShowBatchPanel(false)}
+            />
+          </div>
+        </div>
+      )}
       <div className="flex-1 flex">
       <aside className="w-56 shrink-0 border-r border-ink-200 bg-white flex flex-col">
         {/* 品牌头：logo + 名字 + plan chip */}
@@ -299,7 +436,15 @@ export default function App() {
           <div className="flex flex-col h-full">
             <HistoryQuotaBanner />
             <div className="flex-1 p-8 overflow-y-auto">
-              <HistoryPane items={recent} onClear={() => setRecent([])} />
+              <HistoryPane
+                items={recent}
+                onClear={() => setRecent([])}
+                onOpenRepolish={(its) => {
+                  setRepolishItems(its);
+                  setRepolishOpen(true);
+                }}
+                onOpenBatch={() => setShowBatchPanel(true)}
+              />
             </div>
           </div>
         )}
@@ -315,6 +460,20 @@ export default function App() {
         onSave={async (next) => {
           await saveConfig(next);
           setCfg(next);
+          // Wave 4 — companion 同步
+          // 1. 切换 enabled 开关 → show/hide companion 窗口
+          // 2. 任何 cfg 改 → emit companion-config，让 companion webview 自适应
+          //    （pet slug / 话痨度 / persona）
+          try {
+            if (cfg && cfg.companion_enabled !== next.companion_enabled) {
+              await invoke(
+                next.companion_enabled ? "cmd_companion_show" : "cmd_companion_hide",
+              );
+            }
+            await emitTo("companion", "companion-config", { cfg: next });
+          } catch (e) {
+            console.warn("[companion] config sync failed:", e);
+          }
         }}
       />
       <AccountSheet
@@ -1013,6 +1172,8 @@ function HomePane({
 
   return (
     <div className="max-w-3xl space-y-6">
+      {/* P0 wave 3 #1 + #7 — 进度圆环 + 今日个性卡（HomePane 顶部，登录前不显） */}
+      <PersonalizationCard loggedIn={account?.state.kind === "authenticated"} />
       {/* (v0.9 editorial) Hero —— 章节 eyebrow + 宋体大字 metric + 仿宋 caption + 当前热键 chip */}
       <section>
         <div className="flex items-center gap-2 mb-3">
@@ -1316,12 +1477,51 @@ function Banner({
 function HistoryPane({
   items,
   onClear,
+  onOpenRepolish,
+  onOpenBatch,
 }: {
   items: { at: string; text: string }[];
   onClear: () => void;
+  onOpenRepolish: (its: { id: string; text: string }[]) => void;
+  onOpenBatch: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // P0 wave 3 #6 — 历史搜索（client-side filter）+ 多选 + 批量重润色
+  const [searchText, setSearchText] = useState("");
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchSelected, setBatchSelected] = useState<Set<number>>(new Set());
+
+  const filtered = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    if (!q) return items.map((it, idx) => ({ ...it, _idx: idx }));
+    return items
+      .map((it, idx) => ({ ...it, _idx: idx }))
+      .filter((it) => (it.text ?? "").toLowerCase().includes(q));
+  }, [items, searchText]);
+
+  const toggleSel = (idx: number) => {
+    setBatchSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  const exitBatch = () => {
+    setBatchMode(false);
+    setBatchSelected(new Set());
+  };
+
+  const triggerRepolish = () => {
+    const its = Array.from(batchSelected)
+      .map((idx) => ({ id: String(idx), text: items[idx]?.text ?? "" }))
+      .filter((x) => x.text.length > 0);
+    if (its.length === 0) return;
+    onOpenRepolish(its);
+    exitBatch();
+  };
 
   // FIX-22 (qa-2026-05-03): 清空历史加 success toast，让用户知道操作真的发生
   // 了 (SET-013)。失败也提示，原本失败 silent 让用户疑「卡了？」。
@@ -1377,15 +1577,65 @@ function HistoryPane({
             最近 {Math.min(50, items.length)} 篇 · 本地 JSONL
           </div>
         </div>
-        <button
-          type="button"
-          className="font-mono text-[11px] tracking-wider px-3 py-1.5 rounded border border-ink-200 text-ink-500 hover:text-signal-500 hover:border-signal-500/40 disabled:opacity-40"
-          disabled={busy}
-          onClick={() => setConfirmOpen(true)}
-        >
-          清空全部
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="font-mono text-[11px] tracking-wider px-3 py-1.5 rounded border border-ink-200 text-ink-500 hover:text-signal-500 hover:border-signal-500/40"
+            onClick={onOpenBatch}
+          >
+            批量转录…
+          </button>
+          {!batchMode ? (
+            <button
+              type="button"
+              className="font-mono text-[11px] tracking-wider px-3 py-1.5 rounded border border-ink-200 text-ink-500 hover:text-signal-500 hover:border-signal-500/40"
+              onClick={() => setBatchMode(true)}
+            >
+              多选
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={batchSelected.size === 0}
+                className="font-mono text-[11px] tracking-wider px-3 py-1.5 rounded bg-signal-500 text-white hover:bg-signal-600 disabled:opacity-40"
+                onClick={triggerRepolish}
+              >
+                批量重润色（{batchSelected.size}）
+              </button>
+              <button
+                type="button"
+                className="font-mono text-[11px] tracking-wider px-3 py-1.5 rounded border border-ink-200 text-ink-500 hover:bg-ink-50"
+                onClick={exitBatch}
+              >
+                退出多选
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="font-mono text-[11px] tracking-wider px-3 py-1.5 rounded border border-ink-200 text-ink-500 hover:text-signal-500 hover:border-signal-500/40 disabled:opacity-40"
+            disabled={busy}
+            onClick={() => setConfirmOpen(true)}
+          >
+            清空全部
+          </button>
+        </div>
       </header>
+      <div className="mb-4">
+        <input
+          type="search"
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          placeholder="搜索本地历史 …（支持中英文片段）"
+          className="w-full rounded-md border border-ink-200 px-3 py-2 text-sm font-serif placeholder:font-mono placeholder:text-[12px] placeholder:text-ink-400 focus:outline-none focus:border-signal-500/60"
+        />
+        {searchText && (
+          <div className="mt-1 font-mono text-[10px] text-ink-400">
+            匹配 {filtered.length} / {items.length}
+          </div>
+        )}
+      </div>
       {confirmOpen && (
         <div className="mb-4 rounded-md border border-signal-500/40 bg-signal-100/40 p-3 text-sm text-signal-600">
           <div>确定清空所有本地历史？此操作不可恢复。</div>
@@ -1409,12 +1659,37 @@ function HistoryPane({
         </div>
       )}
       <div className="divide-y divide-ink-100">
-        {items.map((it, i) => {
+        {filtered.length === 0 && (
+          <div className="py-8 text-center font-mono text-[11px] text-ink-400">
+            {searchText ? "没有匹配的记录" : "（空）"}
+          </div>
+        )}
+        {filtered.map((it) => {
+          const i = it._idx;
           const t = new Date(it.at);
           const time = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
           const date = `${t.getFullYear()}.${String(t.getMonth() + 1).padStart(2, "0")}.${String(t.getDate()).padStart(2, "0")}`;
+          const checked = batchSelected.has(i);
           return (
-            <article key={i} className="flex gap-3 py-4 group">
+            <article
+              key={i}
+              className={
+                "flex gap-3 py-4 group " +
+                (batchMode ? "cursor-pointer hover:bg-ink-50" : "")
+              }
+              onClick={() => {
+                if (batchMode) toggleSel(i);
+              }}
+            >
+              {batchMode && (
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleSel(i)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="self-start mt-2"
+                />
+              )}
               <div className="w-[2px] bg-signal-500/70 group-hover:bg-signal-500 self-stretch shrink-0 rounded-full transition-colors" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1.5 font-mono text-[10px] tracking-wider text-ink-400">

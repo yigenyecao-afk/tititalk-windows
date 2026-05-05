@@ -1,8 +1,13 @@
 mod account;
+#[cfg(windows)]
+mod app_context;
 mod asr;
+mod asr_prewarm;
 mod asr_stream;
 mod assistant;
 mod audio;
+mod batch_transcribe;
+mod companion;
 mod config;
 mod history;
 mod hotkey;
@@ -10,6 +15,7 @@ mod hotword_candidate;
 mod insertion;
 mod mouse_hotkey;
 mod pill;
+mod rewrite_selection;
 mod state;
 mod stylist;
 mod system_audio_muter;
@@ -151,6 +157,22 @@ pub fn run() {
             cmd_assistant_run_action,
             cmd_assistant_insert_to_app,
             cmd_assistant_hide,
+            // P0 wave 3 — 通用 authed HTTP 通道（personalization / app persona
+            // rules / repolish / meetings / orgs / audit / cross-history search
+            // 17 个 endpoint 全走这 4 个 cmd），加 batch_transcribe + rewrite_selection
+            cmd_account_authed_get,
+            cmd_account_authed_post,
+            cmd_account_authed_put,
+            cmd_account_authed_delete,
+            batch_transcribe::cmd_transcribe_file,
+            rewrite_selection::cmd_get_clipboard_text,
+            rewrite_selection::cmd_rewrite_selection_start,
+            // Wave 4 — 桌面宠物窗口
+            companion::cmd_companion_show,
+            companion::cmd_companion_hide,
+            companion::cmd_companion_set_position,
+            companion::cmd_companion_get_position,
+            companion::cmd_companion_save_share_card,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -159,12 +181,27 @@ pub fn run() {
             // assistant::trigger 读 webview window 用。
             *app_state.app_handle.write() = Some(handle.clone());
 
+            // P0 wave 3 #2 #12 — 前台窗口探测（emit `app_context_changed` 给前端）
+            #[cfg(windows)]
+            {
+                let probe = app_context::AppContextProbe::new();
+                probe.start(handle.clone());
+                // probe 内部 spawn 后通过 Arc<AtomicBool> 自管，drop 即可
+                std::mem::forget(probe);
+            }
+
             // Tray + menu
             tray::install_tray(&handle).expect("install tray");
 
             // Pill positioning helper (initial hide)
             if let Some(pill) = app.get_webview_window("pill") {
                 let _ = pill.hide();
+            }
+            // Wave 4 — companion 默认 hidden，前端按 cfg.companion.enabled 决定
+            // 是否调 cmd_companion_show；这样就算用户未开启宠物，进程也不耗
+            // 渲染。前端冷启动时读 cfg 一次再调 show。
+            if let Some(comp) = app.get_webview_window("companion") {
+                let _ = comp.hide();
             }
 
             // Show main window on first launch + every cold start. The window
@@ -212,6 +249,17 @@ pub fn run() {
             let acc_for_boot = account.clone();
             tauri::async_runtime::spawn(async move {
                 acc_for_boot.bootstrap().await;
+            });
+
+            // (P1 hotkey→partial 加速 2026-05-05) 注册 ASR prewarmer。
+            // 跟 account 绑定 — prewarmer 内部 run_one 自检 account.read().is_none()
+            // 时 30s 后再试，bootstrap 完成自动开始真正的 prewarm。
+            // 同时后台预热 cpal/WASAPI 子系统：首次 default_input_device 冷加载
+            // ~50-300ms 在 launch 后跑掉，省下次 hotkey 同步等待。
+            asr_prewarm::ensure_started(app_state.clone());
+            asr_prewarm::enable();
+            tauri::async_runtime::spawn_blocking(|| {
+                audio::prewarm_audio_device();
             });
 
             // Deep-link callback — forwarded to Account.
@@ -649,4 +697,71 @@ fn cmd_hotword_dismiss(token: String) {
 #[tauri::command]
 fn cmd_hotword_clear_all() {
     hotword_candidate::clear_all();
+}
+
+// ---------- (P0 wave 3) 通用 authed HTTP 命令 ----------
+//
+// 给前端 lib/wave3-api.ts 跑 17 个 wave 3 endpoint 用。所有调用复用 Account
+// 的 ApiClient（同一份 token / refresh single-flight / X-User-Plan tap），
+// 不另起 reqwest::Client；这样 401 自动 refresh / device_limit 等错误码也跟
+// 主路径一致。
+//
+// 设计取舍：
+//   • 返 serde_json::Value 让前端 TypeScript 自己定义 DTO；后端响应 schema
+//     一变不需要 Rust 同步动。
+//   • body 从前端 JSON 字符串 / object 都接（用 Value）—— 比 generic 简单。
+//   • 错误转 String：ApiError::friendly_message 已经是给用户看的人话。
+
+#[tauri::command]
+async fn cmd_account_authed_get(
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    let acc = account_handle(&state)?;
+    acc.api()
+        .get::<serde_json::Value>(&path)
+        .await
+        .map_err(|e| e.friendly_message())
+}
+
+#[tauri::command]
+async fn cmd_account_authed_post(
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let acc = account_handle(&state)?;
+    acc.api()
+        .post::<serde_json::Value, serde_json::Value>(&path, &body, true)
+        .await
+        .map_err(|e| e.friendly_message())
+}
+
+#[tauri::command]
+async fn cmd_account_authed_put(
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+    body: serde_json::Value,
+    // Wave 4 Stage 2 — companion PUT 用 If-Match: <version>；其它端点不传时
+    // 默认 None → 转空切片，零兼容代价。
+    headers: Option<std::collections::HashMap<String, String>>,
+) -> Result<serde_json::Value, String> {
+    let acc = account_handle(&state)?;
+    let extra: Vec<(&str, String)> = headers
+        .as_ref()
+        .map(|m| m.iter().map(|(k, v)| (k.as_str(), v.clone())).collect())
+        .unwrap_or_default();
+    acc.api()
+        .put::<serde_json::Value, serde_json::Value>(&path, &body, &extra)
+        .await
+        .map_err(|e| e.friendly_message())
+}
+
+#[tauri::command]
+async fn cmd_account_authed_delete(
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<(), String> {
+    let acc = account_handle(&state)?;
+    acc.api().delete(&path).await.map_err(|e| e.friendly_message())
 }
