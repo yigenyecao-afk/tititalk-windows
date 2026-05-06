@@ -40,7 +40,10 @@ const REFRESH_INTERVAL_SEC: u64 = 50;
 /// 启动后延迟 prewarm，让 UI 先稳定
 const INITIAL_DELAY_SEC: u64 = 2;
 /// prewarm 失败 / 被关后多久重试
-const RETRY_DELAY_SEC: u64 = 5;
+/// (P1-20 2026-05-06) 5s→2s：弱网下用户 hotkey 第 2-5 次仍冷启的根因——
+/// prewarm 失败后 5s 才重试，命中率太低。改 2s 后命中率显著上升，失败重试
+/// 网络压力相比 50s 健康刷新可忽略。
+const RETRY_DELAY_SEC: u64 = 2;
 /// acquire 后立刻起下次 prewarm 的延迟
 const POST_ACQUIRE_DELAY_MS: u64 = 500;
 

@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
 use tokio::time::{Duration, sleep};
 
+use crate::state::AppState;
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AppContextEvent {
     pub exe: String,
@@ -31,7 +33,9 @@ impl AppContextProbe {
     }
 
     /// 启动 1Hz 轮询；多次 start 是幂等的（启动期间忽略后续调用）。
-    pub fn start(&self, app: AppHandle) {
+    /// (P2-30 2026-05-06) 接 AppState，每 tick 读 telemetry_app_context_enabled
+    /// 决定是否 emit；用户关掉后立即停止上报。
+    pub fn start(&self, app: AppHandle, state: Arc<AppState>) {
         if self.running.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -40,16 +44,23 @@ impl AppContextProbe {
             let mut last_exe: Option<String> = None;
             let mut last_title: Option<String> = None;
             while running.load(Ordering::SeqCst) {
-                if let Some((exe, title)) = current_foreground() {
-                    if Some(&exe) != last_exe.as_ref() || Some(&title) != last_title.as_ref() {
-                        let payload = AppContextEvent {
-                            exe: exe.clone(),
-                            window_title: title.clone(),
-                        };
-                        let _ = app.emit("app_context_changed", payload);
-                        last_exe = Some(exe);
-                        last_title = Some(title);
+                let telemetry_on = state.config.read().telemetry_app_context_enabled;
+                if telemetry_on {
+                    if let Some((exe, title)) = current_foreground() {
+                        if Some(&exe) != last_exe.as_ref() || Some(&title) != last_title.as_ref() {
+                            let payload = AppContextEvent {
+                                exe: exe.clone(),
+                                window_title: title.clone(),
+                            };
+                            let _ = app.emit("app_context_changed", payload);
+                            last_exe = Some(exe);
+                            last_title = Some(title);
+                        }
                     }
+                } else {
+                    // 关闭后清空 last_*，再次开启时重发当前 ctx
+                    last_exe = None;
+                    last_title = None;
                 }
                 sleep(Duration::from_millis(1000)).await;
             }

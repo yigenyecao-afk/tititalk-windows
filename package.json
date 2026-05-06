@@ -1,6 +1,6 @@
 {
   "name": "tititalk-windows",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "TiTiTalk Windows — voice-to-text input, ports the macOS app to Win10/11.",
   "private": true,
   "type": "module",
@@ -15,6 +15,7 @@
     "@tauri-apps/plugin-clipboard-manager": "^2.2.0",
     "@tauri-apps/plugin-deep-link": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-fs": "^2.2.0",
     "@tauri-apps/plugin-os": "^2.2.0",
     "@tauri-apps/plugin-process": "^2.2.0",
     "@tauri-apps/plugin-shell": "^2.2.0",

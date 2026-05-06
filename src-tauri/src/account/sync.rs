@@ -454,6 +454,9 @@ pub fn snapshot_from_config_with_overlay(
         ("sound_feedback_volume",     json!(cfg.sound_feedback_volume)),
         ("history_retention_days",    json!(cfg.history_retention_days)),
         ("history_cleanup_enabled",   json!(cfg.history_cleanup_enabled)),
+        // P1 跨平台对齐 2026-05-06：跟 Mac 端 floating_pill_enabled 同 key
+        ("floating_pill_enabled",     json!(cfg.pill_enabled)),
+        ("telemetry_app_context_enabled", json!(cfg.telemetry_app_context_enabled)),
     ];
     let mut ui_map: Map<String, Value> = match cloud_ui {
         Some(cu) => cu.clone(), // 保留云端所有字段（含 mac 独有的）
@@ -533,6 +536,13 @@ pub fn apply_cloud_to_config(cloud: &Map<String, Value>, cfg: &mut AppConfig) {
         }
         if let Some(b) = ui.get("history_cleanup_enabled").and_then(|v| v.as_bool()) {
             cfg.history_cleanup_enabled = b;
+        }
+        // P1 跨平台对齐 2026-05-06：跟 snapshot 端一一对应
+        if let Some(b) = ui.get("floating_pill_enabled").and_then(|v| v.as_bool()) {
+            cfg.pill_enabled = b;
+        }
+        if let Some(b) = ui.get("telemetry_app_context_enabled").and_then(|v| v.as_bool()) {
+            cfg.telemetry_app_context_enabled = b;
         }
     }
 }

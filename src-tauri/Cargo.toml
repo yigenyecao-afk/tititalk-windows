@@ -1,6 +1,6 @@
 [package]
 name = "tititalk"
-version = "0.10.1"
+version = "0.10.2"
 description = "TiTiTalk Windows — voice-to-text input"
 authors = ["TiTiTalk"]
 edition = "2021"
@@ -17,6 +17,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
+# (P1-11 历史导出 2026-05-06) plugin-fs 写文件 — 跟 plugin-dialog.save 配套
+tauri-plugin-fs = "2"
 tauri-plugin-os = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"

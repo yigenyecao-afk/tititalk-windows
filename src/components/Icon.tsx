@@ -30,7 +30,13 @@ type IconName =
   | "key"           // API 密钥
   | "edit"          // 整理模型
   | "slider"        // 整理强度
-  | "book";         // 词典
+  | "book"          // 词典
+  // (P1-16 + P2-25 2026-05-06) 新增：工具栏 / 隐私
+  | "info"          // 一键诊断
+  | "folder"        // 打开日志文件夹
+  | "reset"         // 重置默认
+  | "trash"         // 删除账户
+  | "shield";       // 隐私 / 遥测
 
 export function Icon({ name, size = 14 }: { name: IconName; size?: number }): ReactNode {
   const props = {
@@ -220,6 +226,41 @@ export function Icon({ name, size = 14 }: { name: IconName; size?: number }): Re
           <path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z" />
           <path d="M19 17H6a2 2 0 0 0-2 2" />
           <path d="M9 7h6" />
+        </svg>
+      );
+    case "info":
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5" />
+          <path d="M12 8h.01" />
+        </svg>
+      );
+    case "folder":
+      return (
+        <svg {...props}>
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        </svg>
+      );
+    case "reset":
+      return (
+        <svg {...props}>
+          <path d="M3 12a9 9 0 1 0 3-6.7" />
+          <path d="M3 4v5h5" />
+        </svg>
+      );
+    case "trash":
+      return (
+        <svg {...props}>
+          <path d="M4 6h16" />
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+        </svg>
+      );
+    case "shield":
+      return (
+        <svg {...props}>
+          <path d="M12 3l8 4v5c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V7z" />
         </svg>
       );
   }

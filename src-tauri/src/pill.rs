@@ -10,10 +10,14 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize};
 
 use crate::state::{AppState, PipelineEvent, PipelinePhase};
 
-pub async fn on_pipeline_event(handle: &AppHandle, _state: &Arc<AppState>, ev: &PipelineEvent) {
+pub async fn on_pipeline_event(handle: &AppHandle, state: &Arc<AppState>, ev: &PipelineEvent) {
     let Some(pill) = handle.get_webview_window("pill") else {
         return;
     };
+
+    // (P0-4 2026-05-06) pill_enabled 默认 false，跟 Mac floatingPillEnabled 对齐——
+    // 用户不主动开就不显示。phase 切到 active 也不 show，避免老用户「关了又冒出来」。
+    let pill_enabled = state.config.read().pill_enabled;
 
     match ev {
         PipelineEvent::Phase { phase } => {
@@ -22,6 +26,10 @@ pub async fn on_pipeline_event(handle: &AppHandle, _state: &Arc<AppState>, ev: &
                 | PipelinePhase::Transcribing
                 | PipelinePhase::Polishing
                 | PipelinePhase::Inserting => {
+                    if !pill_enabled {
+                        let _ = pill.hide();
+                        return;
+                    }
                     let _ = position_near_cursor(&pill);
                     let _ = pill.show();
                 }

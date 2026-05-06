@@ -32,12 +32,25 @@ export default function SettingsSheet({
   proUnlocked,
   onClose,
   onSave,
+  appearance = "auto",
+  onAppearanceChange,
+  onResetDefaults,
+  onDeleteAccount,
+  onOpenLogFolder,
+  onOpenDiagnostics,
 }: {
   open: boolean;
   cfg: AppConfig;
   proUnlocked: boolean;
   onClose: () => void;
   onSave: (next: AppConfig) => Promise<void>;
+  /// (P1-12 + P2-25 2026-05-06)
+  appearance?: "auto" | "light" | "dark";
+  onAppearanceChange?: (v: "auto" | "light" | "dark") => void;
+  onResetDefaults?: () => void;
+  onDeleteAccount?: () => void;
+  onOpenLogFolder?: () => void;
+  onOpenDiagnostics?: () => void;
 }) {
   const [draft, setDraft] = useState<AppConfig>(cfg);
   const [saving, setSaving] = useState(false);
@@ -346,6 +359,19 @@ export default function SettingsSheet({
         <section>
           <TypelessSectionHeader title="录音浮窗" subtitle="说话时屏幕上出现的小窗" />
           <TypelessCard>
+            {/* (P0-4 跨端对齐) 显示开关 - Mac 默认关，Win 现在也默认关 */}
+            <TypelessRow
+              iconNode={<Icon name="sparkle" />}
+              iconColor="#A855F7"
+              title="显示录音浮窗"
+              subtitle="录音/转写/润色时是否在屏幕中下方显示小窗。关闭后仅靠提示音和插入反馈"
+              trailing={
+                <Switch
+                  checked={draft.pill_enabled}
+                  onChange={(v) => patch("pill_enabled", v)}
+                />
+              }
+            />
             <TypelessRow
               title="浮窗主题"
               subtitle={pillThemeHint(draft.pill_theme)}
@@ -360,6 +386,48 @@ export default function SettingsSheet({
                   <option value="telegraph">电报 · 屏幕底等宽 ticker</option>
                   <option value="seal">印章 · 朱砂方印章</option>
                 </select>
+              }
+            />
+          </TypelessCard>
+        </section>
+
+        {/* (P1-12 + P2-30 2026-05-06) 外观 + 隐私 */}
+        <section>
+          <TypelessSectionHeader title="外观与隐私" subtitle="主题切换 / 遥测开关" />
+          <TypelessCard>
+            <TypelessRow
+              iconNode={<Icon name="palette" />}
+              iconColor="#0EA5E9"
+              title="主题"
+              subtitle={
+                appearance === "light" ? "强制亮色" :
+                appearance === "dark" ? "强制暗色" :
+                "跟随系统（推荐）"
+              }
+              trailing={
+                <select
+                  className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+                  value={appearance}
+                  onChange={(e) =>
+                    onAppearanceChange?.(e.target.value as "auto" | "light" | "dark")
+                  }
+                >
+                  <option value="auto">跟随系统</option>
+                  <option value="light">亮色</option>
+                  <option value="dark">暗色</option>
+                </select>
+              }
+            />
+            <TypelessRow
+              iconNode={<Icon name="shield" />}
+              iconColor="#84CC16"
+              title="允许采集前台应用上下文"
+              subtitle="开启后宠物 / 整理风格能识别你正在用什么 app；关闭后这些场景化提示会变弱，但更隐私"
+              trailing={
+                <Switch
+                  checked={draft.telemetry_app_context_enabled}
+                  onChange={(v) => patch("telemetry_app_context_enabled", v)}
+                />
               }
             />
           </TypelessCard>
@@ -733,6 +801,77 @@ export default function SettingsSheet({
                   min_hold_ms @field 留生效。 */}
             </div>
           )}
+        </section>
+
+        {/* (P2-25 2026-05-06) 工具栏：诊断 / 日志 / 重置 / 删除账户 */}
+        <section>
+          <TypelessSectionHeader title="工具" subtitle="疑难诊断与账户管理" />
+          <TypelessCard>
+            <TypelessRow
+              iconNode={<Icon name="info" />}
+              iconColor="#0EA5E9"
+              title="一键诊断"
+              subtitle="检查麦克风权限 / 网络连通 / 云端 API 可达 / 配额状态"
+              trailing={
+                <button
+                  type="button"
+                  className="text-sm text-signal-500 hover:text-signal-600 underline-offset-2 hover:underline"
+                  onClick={() => onOpenDiagnostics?.()}
+                >
+                  开始
+                </button>
+              }
+            />
+            <TypelessRow
+              iconNode={<Icon name="folder" />}
+              iconColor="#83868d"
+              title="打开日志文件夹"
+              subtitle="出问题时把里面的 tititalk.log 发给 hi@tititalk.com"
+              trailing={
+                <button
+                  type="button"
+                  className="text-sm text-signal-500 hover:text-signal-600 underline-offset-2 hover:underline"
+                  onClick={() => onOpenLogFolder?.()}
+                >
+                  打开
+                </button>
+              }
+            />
+            <TypelessRow
+              iconNode={<Icon name="reset" />}
+              iconColor="#F59E0B"
+              title="重置为默认设置"
+              subtitle="清空当前所有偏好，恢复到首次安装的状态。账户、历史、词典不受影响"
+              trailing={
+                <button
+                  type="button"
+                  className="text-sm text-amber-600 hover:text-amber-700 underline-offset-2 hover:underline"
+                  onClick={() => {
+                    if (confirm("确认把所有设置重置为默认值？账户和历史不会被删除。")) {
+                      onResetDefaults?.();
+                    }
+                  }}
+                >
+                  重置
+                </button>
+              }
+            />
+            <TypelessRow
+              iconNode={<Icon name="trash" />}
+              iconColor="#EF4444"
+              title="删除账户"
+              subtitle="永久删除你在 tititalk.com 的账户、历史、配置。此操作不可逆，符合《个人信息保护法》数据删除权利"
+              trailing={
+                <button
+                  type="button"
+                  className="text-sm text-red-600 hover:text-red-700 underline-offset-2 hover:underline"
+                  onClick={() => onDeleteAccount?.()}
+                >
+                  申请删除…
+                </button>
+              }
+            />
+          </TypelessCard>
         </section>
 
         {/* footer 操作 */}

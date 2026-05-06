@@ -734,12 +734,54 @@ impl Account {
     /// Called from the deep-link handler on `tititalk://auth/callback?...`.
     /// Validates session_id matches the in-flight one, persists tokens,
     /// loads /me. Bad shapes are silently ignored (anti-DoS).
+    /// (P0-1 加固后) URL 不再直接含 token；走 `?code=&state=` → POST /exchange 换 token。
+    /// 兼容旧 backend：如果 URL 仍是 `?access=&refresh=` 直接用。
     pub async fn handle_auth_callback(&self, url: &str) {
-        let (session_id, access, refresh) = match auth::parse_callback(url) {
+        let parsed = match auth::parse_callback(url) {
             Ok(x) => x,
             Err(e) => {
                 log::warn!("auth-callback ignored: {e}");
                 return;
+            }
+        };
+        let (session_id, access, refresh) = match parsed {
+            auth::CallbackParams::LegacyTokens { session_id, access, refresh } => {
+                (session_id, access, refresh)
+            }
+            auth::CallbackParams::Code { session_id, code, state } => {
+                // Anti-CSRF: must currently be in `.authenticating(<sid>)`.
+                let expected_sid = match &self.inner.read().state {
+                    AuthState::Authenticating { session_id } => session_id.clone(),
+                    _ => {
+                        log::warn!("auth-callback: ignored — not awaiting login");
+                        return;
+                    }
+                };
+                if expected_sid != session_id {
+                    log::warn!("auth-callback: session_id mismatch (pre-exchange)");
+                    self.inner.write().state = AuthState::Error {
+                        message: "登录会话不匹配，请重新发起登录".into(),
+                        code: Some("session_mismatch".into()),
+                        manage_url: None,
+                    };
+                    self.emit_state();
+                    return;
+                }
+                match auth::exchange_code(&self.api, &session_id, &code, &state).await {
+                    Ok((access, refresh)) => (session_id, access, refresh),
+                    Err(e) => {
+                        let code_str = e.code().map(String::from);
+                        let msg = e.friendly_message();
+                        log::warn!("desktop exchange failed: {msg}");
+                        self.inner.write().state = AuthState::Error {
+                            message: format!("登录换取失败：{msg}"),
+                            code: code_str,
+                            manage_url: None,
+                        };
+                        self.emit_state();
+                        return;
+                    }
+                }
             }
         };
         // Anti-CSRF: must currently be in `.authenticating(<sid>)`.

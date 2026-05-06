@@ -3,7 +3,64 @@
 @tailwind utilities;
 
 @layer base {
+  /* (P2-28 跨端字号缩放 2026-05-06) html font-size 跟随系统设置——webview
+   * 默认 16px，硬编码 px 值无法响应。改用 16px 基线 + clamp，让 Windows 显
+   * 示缩放（125%/150%）和系统字号偏好都能反映在我们 UI 上。Tailwind text-*
+   * 类已基于 rem，自动跟随。 */
+  html {
+    font-size: clamp(14px, 1rem, 18px);
+  }
   body {
     -webkit-font-smoothing: antialiased;
   }
+
+  /* (P1-12 暗色模式 2026-05-06) prefers-color-scheme 自动跟系统；用户也可
+   * 通过 Settings 强制切换（在 <html> 上加 / 移除 .force-dark / .force-light）。
+   * 用 CSS 全局重映射 Tailwind ink/zinc/white 调色板，避免逐组件改 className——
+   * 大部分屏幕一次见效。明确不需要暗色的元素（pill 主题、品牌 chip）单独 opt-out。 */
+  @media (prefers-color-scheme: dark) {
+    html:not(.force-light) {
+      color-scheme: dark;
+    }
+    html:not(.force-light) body {
+      background-color: #0f1014;
+      color: #eeeef0;
+    }
+    html:not(.force-light) .bg-white { background-color: #14161b !important; }
+    html:not(.force-light) .bg-ink-50 { background-color: #0f1014 !important; }
+    html:not(.force-light) .bg-ink-50\/30 { background-color: rgba(15, 16, 20, 0.6) !important; }
+    html:not(.force-light) .bg-ink-50\/60 { background-color: rgba(15, 16, 20, 0.8) !important; }
+    html:not(.force-light) .bg-ink-100 { background-color: #1c1e22 !important; }
+    html:not(.force-light) .border-ink-200 { border-color: #2b2d33 !important; }
+    html:not(.force-light) .border-ink-100 { border-color: #1c1e22 !important; }
+    html:not(.force-light) .text-ink-900 { color: #f7f7f8 !important; }
+    html:not(.force-light) .text-ink-800 { color: #eeeef0 !important; }
+    html:not(.force-light) .text-ink-700 { color: #d8d9dc !important; }
+    html:not(.force-light) .text-ink-600 { color: #b4b6bb !important; }
+    html:not(.force-light) .text-ink-500 { color: #83868d !important; }
+    html:not(.force-light) .text-ink-400 { color: #5a5d65 !important; }
+  }
+  html.force-dark {
+    color-scheme: dark;
+  }
+  html.force-dark body {
+    background-color: #0f1014;
+    color: #eeeef0;
+  }
+  html.force-dark .bg-white { background-color: #14161b !important; }
+  html.force-dark .bg-ink-50 { background-color: #0f1014 !important; }
+  html.force-dark .bg-ink-50\/30 { background-color: rgba(15, 16, 20, 0.6) !important; }
+  html.force-dark .bg-ink-50\/60 { background-color: rgba(15, 16, 20, 0.8) !important; }
+  html.force-dark .bg-ink-100 { background-color: #1c1e22 !important; }
+  html.force-dark .border-ink-200 { border-color: #2b2d33 !important; }
+  html.force-dark .border-ink-100 { border-color: #1c1e22 !important; }
+  html.force-dark .text-ink-900 { color: #f7f7f8 !important; }
+  html.force-dark .text-ink-800 { color: #eeeef0 !important; }
+  html.force-dark .text-ink-700 { color: #d8d9dc !important; }
+  html.force-dark .text-ink-600 { color: #b4b6bb !important; }
+  html.force-dark .text-ink-500 { color: #83868d !important; }
+  html.force-dark .text-ink-400 { color: #5a5d65 !important; }
+
+  /* keep brand pill themes unaffected by dark — they have their own palette */
+  .pill-themed { color-scheme: light; }
 }

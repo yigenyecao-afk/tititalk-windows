@@ -44,9 +44,11 @@ import {
   type AccountSnapshot,
 } from "./lib/account";
 
-/// (v0.7.5) Typeless 风 IA — 侧栏只 2 项核心入口（首页/历史），
+/// (v0.7.5) Typeless 风 IA — 侧栏 3 项核心入口（首页/历史/词典），
 /// 账户/设置/帮助沉到侧栏底部 toolbar 弹 sheet。
-type Tab = "home" | "history";
+/// (P1-10 跨端对齐 2026-05-06) 加 dictionary 跟 Mac 对齐——之前沉到设置高级
+/// 三层深，词典编辑频次很高直接顶级 tab。
+type Tab = "home" | "history" | "dictionary";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("home");
@@ -81,13 +83,48 @@ export default function App() {
   const [repolishOpen, setRepolishOpen] = useState(false);
   const [repolishItems, setRepolishItems] = useState<{ id: string; text: string }[]>([]);
   const [showBatchPanel, setShowBatchPanel] = useState(false);
+  /// (P1-14 2026-05-06) Hotkey cheatsheet 浮窗。Ctrl+Alt+Shift+/ 唤起，6s 自关。
+  const [cheatsheetOpen, setCheatsheetOpen] = useState(false);
+  /// (P1-12 用户外观 2026-05-06) localStorage 存的外观偏好；prefers-color-scheme
+  /// auto 走系统。force-light/force-dark 在 styles.css 里有 CSS 重写规则。
+  const [appearance, setAppearance] = useState<"auto" | "light" | "dark">(() => {
+    const stored = (localStorage.getItem("titi.appearance") as "auto" | "light" | "dark" | null);
+    return stored ?? "auto";
+  });
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.remove("force-light", "force-dark");
+    if (appearance === "light") html.classList.add("force-light");
+    else if (appearance === "dark") html.classList.add("force-dark");
+    localStorage.setItem("titi.appearance", appearance);
+  }, [appearance]);
 
   // P0 wave 3 — global Ctrl+K (cross-history search) + start persona router
+  // (P1-14 加 cheatsheet hotkey Ctrl+Alt+Shift+/ —— Mac ⌘⌥? 同源)
+  // 用 ref 跟踪 cheatsheetOpen 避免 closure 抓陈值（不重新订阅 listener）
+  const cheatsheetOpenRef = (() => {
+    const ref = useMemo(() => ({ current: false }), []);
+    ref.current = cheatsheetOpen;
+    return ref;
+  })();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
         setSearchOpen(true);
+        return;
+      }
+      if (e.ctrlKey && e.altKey && e.shiftKey && (e.key === "/" || e.key === "?")) {
+        e.preventDefault();
+        setCheatsheetOpen(true);
+        return;
+      }
+      // (P1-14 fix) Esc 仅在 cheatsheet 打开时关闭它；不抢取消录音的 Esc 处理
+      if (e.key === "Escape" && cheatsheetOpenRef.current) {
+        e.stopPropagation();
+        e.preventDefault();
+        setCheatsheetOpen(false);
+        return;
       }
     };
     window.addEventListener("keydown", onKey);
@@ -96,7 +133,15 @@ export default function App() {
       window.removeEventListener("keydown", onKey);
       stopRouter?.();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // (P1-14) cheatsheet 6s 自动关闭
+  useEffect(() => {
+    if (!cheatsheetOpen) return;
+    const t = window.setTimeout(() => setCheatsheetOpen(false), 6000);
+    return () => window.clearTimeout(t);
+  }, [cheatsheetOpen]);
 
   // Wave 4 — companion 冷启动 + quota fan-out
   useEffect(() => {
@@ -367,6 +412,8 @@ export default function App() {
         <nav className="px-2 mt-1 space-y-1 flex-1">
           <NavBtn active={tab === "home"} onClick={() => setTab("home")}>首页</NavBtn>
           <NavBtn active={tab === "history"} onClick={() => setTab("history")}>历史记录</NavBtn>
+          {/* (P1-10 2026-05-06) 词典 tab——跟 Mac 对齐，频次高的入口直接顶级 */}
+          <NavBtn active={tab === "dictionary"} onClick={() => setTab("dictionary")}>词典</NavBtn>
         </nav>
 
         {/* 状态指示器 */}
@@ -448,15 +495,73 @@ export default function App() {
             </div>
           </div>
         )}
+        {tab === "dictionary" && cfg && (
+          <div className="p-8">
+            <DictionaryPane
+              cfg={cfg}
+              onPatchCfg={async (patch) => {
+                const next = { ...cfg, ...patch };
+                try {
+                  await saveConfig(next);
+                  setCfg(next);
+                } catch (e) {
+                  console.error("patch cfg:", e);
+                }
+              }}
+            />
+          </div>
+        )}
       </main>
+      {cheatsheetOpen && (
+        <HotkeyCheatsheetOverlay onClose={() => setCheatsheetOpen(false)} cfg={cfg} />
+      )}
       </div>
 
       {/* Sheets — 跟 Mac TypelessSettingsSheet / AccountSettingsView 一一对应 */}
       <SettingsSheet
         open={showSettings}
-        cfg={cfg}
+        cfg={cfg!}
         proUnlocked={proUnlocked}
         onClose={() => setShowSettings(false)}
+        appearance={appearance}
+        onAppearanceChange={setAppearance}
+        onResetDefaults={async () => {
+          try {
+            const fresh = await invoke<AppConfig>("cmd_reset_default_config");
+            setCfg(fresh);
+            setNotice("已重置为默认设置");
+            window.setTimeout(() => setNotice(""), 3000);
+          } catch (e) {
+            console.error("reset defaults:", e);
+            alert("重置失败：" + String(e));
+          }
+        }}
+        onDeleteAccount={() => {
+          // 跳转到 web dashboard 的删除账户流（合规起见走 web 二次确认）
+          window.open("https://tititalk.com/dashboard/account/delete", "_blank");
+        }}
+        onOpenLogFolder={async () => {
+          try {
+            await invoke("cmd_open_log_folder");
+          } catch (e) {
+            console.error("open log:", e);
+            alert("打开失败：" + String(e));
+          }
+        }}
+        onOpenDiagnostics={async () => {
+          // 简单跑一次：mic 权限 + ASR test
+          const lines: string[] = [];
+          try {
+            const r = await checkMicrophone();
+            lines.push(`麦克风：${r.ok ? "✅ OK" : "❌ " + r.reason}`);
+          } catch (e) { lines.push("麦克风：⚠️ " + String(e)); }
+          try {
+            const { testAsr } = await import("./lib/api");
+            const r = await testAsr();
+            lines.push(`ASR：${r}`);
+          } catch (e) { lines.push("ASR：⚠️ " + String(e)); }
+          alert("一键诊断结果：\n\n" + lines.join("\n"));
+        }}
         onSave={async (next) => {
           await saveConfig(next);
           setCfg(next);
@@ -1256,11 +1361,20 @@ function HomePane({
         <Banner
           tone="warn"
           title="麦克风暂不可用"
-          body={micCheck.reason ?? "未授权或被独占。开启权限后可正常说话。"}
-          actionLabel="打开 Windows 麦克风设置"
+          body={(micCheck.reason ?? "未授权或被独占。") + " 在系统设置开启权限后，点「再次检测」即可。"}
+          actionLabel="打开 Windows 麦克风设置 → 再次检测"
           onAction={async () => {
             try {
               await openMicSettings();
+              // (P2-29 2026-05-06) 15s 后自动 recheck —— 给用户在系统设置面板
+              // 找到麦克风权限项 + 切开关 + 切回来的足够时间（6s 太紧凑用户多
+              // 半还没操作完）。banner 上 actionLabel 也提示用户可手动再点触发。
+              window.setTimeout(async () => {
+                try {
+                  const r = await checkMicrophone();
+                  setMicCheck(r);
+                } catch (e) { console.warn("mic recheck:", e); }
+              }, 15000);
             } catch (e) {
               console.warn("open mic settings:", e);
             }
@@ -1612,6 +1726,8 @@ function HistoryPane({
               </button>
             </>
           )}
+          {/* (P1-11 2026-05-06) 历史导出 — txt/md/json 三种 · 跟 Mac HistoryWindow 对齐 */}
+          <ExportButton items={items} />
           <button
             type="button"
             className="font-mono text-[11px] tracking-wider px-3 py-1.5 rounded border border-ink-200 text-ink-500 hover:text-signal-500 hover:border-signal-500/40 disabled:opacity-40"
@@ -1724,4 +1840,183 @@ function phaseLabel(p: string): string {
     done: "完成",
     failed: "失败",
   } as Record<string, string>)[p] || p;
+}
+
+
+// ─────────────────────────── P1-10 词典 Pane ───────────────────────────
+// 顶级 tab 替代「设置 → 高级 → 词典」三层深的旧入口。逻辑跟 SettingsSheet
+// 里的 dictionary textarea 对齐——都直接写 cfg.dictionary。
+function DictionaryPane({
+  cfg,
+  onPatchCfg,
+}: {
+  cfg: AppConfig;
+  onPatchCfg: (patch: Partial<AppConfig>) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(cfg.dictionary.join("\n"));
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  useEffect(() => { setDraft(cfg.dictionary.join("\n")); }, [cfg.dictionary]);
+  const wordCount = draft.split("\n").map((s) => s.trim()).filter(Boolean).length;
+
+  const persist = async () => {
+    setSaving(true);
+    try {
+      const next = draft
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      // 去重（保序）
+      const seen = new Set<string>();
+      const dedup: string[] = [];
+      for (const w of next) {
+        const key = w.toLowerCase();
+        if (!seen.has(key)) { seen.add(key); dedup.push(w); }
+      }
+      await onPatchCfg({ dictionary: dedup });
+      setSavedAt(Date.now());
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="max-w-3xl">
+      <header className="mb-6">
+        <div className="font-mono text-[10px] tracking-[0.3em] text-signal-500 font-medium mb-2">
+          DICTIONARY · 词典
+        </div>
+        <h1 className="font-serif text-[40px] leading-tight font-medium text-ink-700">
+          {wordCount} <span className="text-[18px] text-ink-500 font-normal">条热词</span>
+        </h1>
+        <p className="text-ink-500 mt-3 text-sm leading-relaxed max-w-md">
+          一行一个；专有名词、人名、术语放这里。识别引擎会自动把这些词当成首选，提高准确率。
+        </p>
+      </header>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="TiTiTalk\nLLM\n智能体"
+        className="border border-ink-300 rounded px-3 py-3 text-sm bg-white w-full h-72 font-mono leading-relaxed"
+      />
+      <div className="mt-4 flex items-center gap-3">
+        <button
+          type="button"
+          className="px-4 py-2 rounded-md bg-ink-900 text-white text-sm hover:bg-ink-700 disabled:opacity-50"
+          disabled={saving}
+          onClick={persist}
+        >
+          {saving ? "保存中…" : "保存"}
+        </button>
+        {savedAt && Date.now() - savedAt < 3000 && (
+          <span className="text-sm text-emerald-600">已保存</span>
+        )}
+        <span className="ml-auto font-mono text-[11px] text-ink-400">
+          云端 settings 同步开启时，词典会自动落到所有设备
+        </span>
+      </div>
+    </div>
+  );
+}
+
+
+// ─────────────────────────── P1-11 历史导出按钮 ───────────────────────────
+function ExportButton({ items }: { items: { at: string; text: string }[] }) {
+  const [open, setOpen] = useState(false);
+  const trigger = (fmt: "txt" | "md" | "json") => async () => {
+    setOpen(false);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const filename = `tititalk-history-${stamp}.${fmt}`;
+    let body = "";
+    if (fmt === "json") {
+      body = JSON.stringify(items, null, 2);
+    } else if (fmt === "md") {
+      body = items
+        .map((it) => `## ${new Date(it.at).toLocaleString("zh-CN")}\n\n${it.text}\n`)
+        .join("\n---\n\n");
+    } else {
+      body = items
+        .map((it) => `[${new Date(it.at).toLocaleString("zh-CN")}]\n${it.text}\n`)
+        .join("\n");
+    }
+    try {
+      // Tauri 2 dialog plugin
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+      const path = await save({
+        defaultPath: filename,
+        filters: [{ name: fmt.toUpperCase(), extensions: [fmt] }],
+      });
+      if (typeof path === "string" && path.length > 0) {
+        await writeTextFile(path, body);
+      }
+    } catch (e) {
+      // 兜底：浏览器 download
+      const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="font-mono text-[11px] tracking-wider px-3 py-1.5 rounded border border-ink-200 text-ink-500 hover:text-signal-500 hover:border-signal-500/40"
+        onClick={() => setOpen((v) => !v)}
+      >
+        导出 ▾
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-40 bg-white border border-ink-200 rounded-md shadow-lg z-10">
+          <button onClick={trigger("txt")} className="block w-full text-left px-3 py-2 text-sm hover:bg-ink-50">导出 .txt</button>
+          <button onClick={trigger("md")} className="block w-full text-left px-3 py-2 text-sm hover:bg-ink-50">导出 .md</button>
+          <button onClick={trigger("json")} className="block w-full text-left px-3 py-2 text-sm hover:bg-ink-50">导出 .json</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ─────────────────────────── P1-14 Hotkey Cheatsheet 浮窗 ───────────────────────────
+function HotkeyCheatsheetOverlay({ onClose, cfg }: { onClose: () => void; cfg: AppConfig | null }) {
+  const hotkeyLabel = cfg ? (VK_CHOICES.find((c) => c.vk === cfg.hotkey_vk)?.label ?? "F1") : "—";
+  const rows = [
+    { keys: hotkeyLabel,        desc: "录音热键（按一下/按住 见设置）" },
+    { keys: "Ctrl+K",           desc: "搜索全部历史记录" },
+    { keys: "Ctrl+Alt+T",       desc: "翻译选中文本" },
+    { keys: "Ctrl+Alt+/",       desc: "「随便问」浮窗" },
+    { keys: "Esc",              desc: "录音/转写中按下立即取消" },
+    { keys: "Ctrl+Alt+Shift+/", desc: "唤起本浮窗" },
+  ];
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-[480px] rounded-xl border border-ink-200 bg-white shadow-2xl p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="font-mono text-[10px] tracking-[0.3em] text-signal-500 font-medium mb-3">
+          KEY MAP · 快捷键
+        </div>
+        <div className="divide-y divide-ink-100">
+          {rows.map((r) => (
+            <div key={r.keys} className="flex items-center gap-4 py-2.5">
+              <kbd className="px-2 py-0.5 rounded border border-ink-300 bg-ink-50 font-mono text-[12px] text-ink-700 min-w-[120px] text-center">
+                {r.keys}
+              </kbd>
+              <span className="text-sm text-ink-600">{r.desc}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 font-mono text-[10px] text-ink-400">
+          6 秒后自动关闭 · Esc 立即关
+        </div>
+      </div>
+    </div>
+  );
 }

@@ -134,6 +134,16 @@ pub struct AppConfig {
     /// 3=频繁。控制 PetBubble 的触发频次。
     #[serde(default = "default_companion_chattiness")]
     pub companion_chattiness: u8,
+    /// (P0-4 跨端对齐 2026-05-06) 录音浮窗 pill 显示开关，跟 Mac
+    /// `floatingPillEnabled` 默认 false 对齐——之前 Win 端常显，跨端体验割裂。
+    /// 关闭时 pill webview 永不展示；用户在设置里勾上才显示。
+    #[serde(default = "no")]
+    pub pill_enabled: bool,
+    /// (P2-30 隐私) 前台 app 上下文遥测 opt-out（控制 app_context_changed 上报）。
+    /// 默认 ON 跟旧行为兼容；关掉后 AppContextProbe 不再 emit，前端 / 宠物 /
+    /// stylist 都拿不到前台 exe 名（仅影响场景化提示，不阻断主流程）。
+    #[serde(default = "yes")]
+    pub telemetry_app_context_enabled: bool,
 }
 
 fn default_engine() -> String { "tititalk_cloud".into() }
@@ -154,10 +164,11 @@ fn default_persona() -> String { "friendly".into() }
 // qwen-turbo 4 月已 deprecated（百炼公告点 qwen-flash 为 drop-in 替代），
 // 跟 mac AppDefaults.polishModel="qwen-flash" 对齐。
 fn default_stylist_model() -> String { "qwen-flash".into() }
-// (v0.7.8) 默认 hybrid 而不是 push_to_talk —— 小白第一次按快捷键 99% 是
-// 短按一下，PTT 模式下短按 = 不响应（无论 min_hold 多小），体感「坏了」。
-// hybrid：tap 当 toggle（按一下开/再按一下停），hold 当 PTT，两路兜底。
-fn default_hotkey_mode() -> String { "hybrid".into() }
+// (P0-8 跨端统一 2026-05-06) 改默认 "toggle" 跟 Mac `hotkeyMode = "toggle"` 对齐
+// —— 之前 Win "hybrid" / Mac "toggle" 不一致导致 CloudConfigSync 反复打架（一端
+// 推送一端覆写）。toggle 行为：按一下开，再按一下停；短按用户也能接住，比 PTT
+// 友好（v0.7.8 当年想用 hybrid 救小白，但实际 toggle 已经覆盖短按场景）。
+fn default_hotkey_mode() -> String { "toggle".into() }
 // (v0.7.8) 250ms 阈值 —— 介于「快速点击 100-150ms」跟「故意长按 400ms+」
 // 之间的合理切分点；500ms 太长，用户长按 0.4s 想 PTT 反而被当 toggle 双触发。
 fn default_hybrid_threshold_ms() -> u32 { 250 }
@@ -211,6 +222,8 @@ impl Default for AppConfig {
             companion_enabled: false,
             companion_pet_slug: default_companion_slug(),
             companion_chattiness: default_companion_chattiness(),
+            pill_enabled: false,
+            telemetry_app_context_enabled: true,
         }
     }
 }

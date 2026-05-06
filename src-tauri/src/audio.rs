@@ -269,7 +269,12 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
         }
     };
 
-    if raw.trim().is_empty() {
+    // (P0-5 2026-05-06) 跟 Mac VoicePipeline `trimmedRaw.count < 2` 对齐——
+    // 极短转写（噪音/单词）不走 polish/insert/billing：避免空转 polish 浪费配额、
+    // 避免空字符串 paste 把用户原 clipboard 污染、避免历史落入 1 字符垃圾条。
+    let trimmed_raw = raw.trim();
+    if trimmed_raw.chars().count() < 2 {
+        log::info!("[short-transcript-guard] dropping {} chars", trimmed_raw.chars().count());
         state.set_phase(PipelinePhase::Done);
         return;
     }
@@ -345,7 +350,7 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
         // (v0.8.3 P0-4) also_copy=true 时：除了插入光标也复制到剪贴板，跟 Mac
         // autoCopyToClipboard 同源。注意 cfg.also_copy 旧字段已存在（v0.7 用），
         // 旧用户 false → 新行为不变。
-        match insertion::insert_text(&text, cfg.also_copy) {
+        match insertion::insert_text(&text, cfg.also_copy, Some(state.clone())) {
             Ok(()) => {
                 state.set_phase(PipelinePhase::Done);
             }

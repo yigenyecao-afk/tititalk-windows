@@ -7,7 +7,11 @@
 //! drops characters under high system load and on apps that filter WM_CHAR. Clipboard+
 //! paste is rock-solid and matches what Mac TiTiTalk effectively does via NSPasteboard.
 
+use std::sync::Arc;
+
 use anyhow::{anyhow, Context};
+
+use crate::state::{AppState, PipelineEvent};
 
 #[cfg(windows)]
 use windows::Win32::{
@@ -25,7 +29,7 @@ use windows::Win32::{
     },
 };
 
-pub fn insert_text(text: &str, also_copy: bool) -> anyhow::Result<()> {
+pub fn insert_text(text: &str, also_copy: bool, state: Option<Arc<AppState>>) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
@@ -49,12 +53,27 @@ pub fn insert_text(text: &str, also_copy: bool) -> anyhow::Result<()> {
     // 这个窗口内 drain 完。restore 是 async thread，主流水线不挡。
     if let Some(prior) = saved {
         let prior = prior.clone();
+        let state_for_thread = state.clone();
         std::thread::Builder::new()
             .name("tititalk-clipboard-restore".into())
             .spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(600));
                 if let Err(e) = copy_to_clipboard(&prior) {
+                    // (P0-6 2026-05-06) 之前 restore 失败仅 warn 日志，用户
+                    // 完全不知道——下次 ⌘V 拿到的是 transcript 而非他原来
+                    // copy 的 URL。改：emit pill error event，pill UI 显示
+                    // 「原剪贴板未恢复，可手动复制：[预览]」。
                     log::warn!("clipboard restore failed: {e}");
+                    if let Some(st) = state_for_thread {
+                        let preview = if prior.chars().count() > 24 {
+                            format!("{}…", prior.chars().take(24).collect::<String>())
+                        } else {
+                            prior.clone()
+                        };
+                        st.emit(PipelineEvent::Error {
+                            message: format!("原剪贴板未能恢复：{preview}（请手动复制）"),
+                        });
+                    }
                 }
             })
             .ok();

@@ -120,6 +120,8 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        // (P1-11 历史导出 2026-05-06) 历史 export 用 plugin-fs.writeTextFile 落盘
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
@@ -134,6 +136,8 @@ pub fn run() {
             cmd_force_record_stop,
             cmd_force_record_cancel,
             cmd_open_main_window,
+            cmd_reset_default_config,
+            cmd_open_log_folder,
             cmd_account_login_start,
             cmd_account_logout,
             cmd_account_get_state,
@@ -185,13 +189,17 @@ pub fn run() {
             #[cfg(windows)]
             {
                 let probe = app_context::AppContextProbe::new();
-                probe.start(handle.clone());
+                probe.start(handle.clone(), app_state.clone());
                 // probe 内部 spawn 后通过 Arc<AtomicBool> 自管，drop 即可
                 std::mem::forget(probe);
             }
 
-            // Tray + menu
-            tray::install_tray(&handle).expect("install tray");
+            // Tray + menu — 某些 Windows SKU（精简版/Server Core）没装托盘
+            // shell，install_tray 会 panic 把整个进程拖死。改 graceful：错误
+            // 写日志，继续启动；用户可从 Start menu 重新打开主窗口。
+            if let Err(e) = tray::install_tray(&handle) {
+                eprintln!("[tray] install failed: {e}; continuing without tray");
+            }
 
             // Pill positioning helper (initial hide)
             if let Some(pill) = app.get_webview_window("pill") {
@@ -376,7 +384,24 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building TiTiTalk")
+        .unwrap_or_else(|err| {
+            // (P0-7 2026-05-06) tauri Builder::build 失败 = 进程根本起不来；
+            // 老 .expect 只在 stderr 抛 + abort，部分 Windows SKU 直接闪退用户
+            // 不知道为啥。这里写日志 + 弹一次系统消息框 + exit(1)，至少留下
+            // 现场。panic hook (line 95) 已捕获栈，外加这里再写一条 fatal log。
+            log::error!("[fatal] tauri build failed: {err}");
+            #[cfg(windows)]
+            unsafe {
+                use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+                use windows::core::PCWSTR;
+                let title: Vec<u16> = "TiTiTalk 启动失败\0".encode_utf16().collect();
+                let body: Vec<u16> = format!(
+                    "TiTiTalk 无法启动：{err}\n\n请把日志（%LOCALAPPDATA%\\TiTiTalk\\tititalk.log）发邮件给 hi@tititalk.com\0"
+                ).encode_utf16().collect();
+                let _ = MessageBoxW(None, PCWSTR(body.as_ptr()), PCWSTR(title.as_ptr()), MB_OK | MB_ICONERROR);
+            }
+            std::process::exit(1);
+        })
         .run(|app_handle, event| {
             // FIX-28: 应用真退出（系统/托盘 quit）前 flush CloudConfigSync 的
             // 待发 PUT，最多 3s。绝大多数情况立即返（没有 in-flight）；只有用户
@@ -451,6 +476,44 @@ fn cmd_force_record_cancel(state: tauri::State<'_, Arc<AppState>>) -> Result<(),
 #[tauri::command]
 fn cmd_open_main_window(handle: tauri::AppHandle) -> Result<(), String> {
     tray::ensure_main_visible(&handle);
+    Ok(())
+}
+
+/// (P2-25 2026-05-06) 重置 cfg 到默认值。账户/历史/词典默认条目不动。
+#[tauri::command]
+fn cmd_reset_default_config(state: tauri::State<'_, Arc<AppState>>) -> Result<config::AppConfig, String> {
+    // 保留用户的字典——重置只针对偏好开关，不删用户主动添加的内容
+    let prev = state.config.read().clone();
+    let mut fresh = config::AppConfig::default();
+    fresh.dictionary = prev.dictionary;
+    fresh.api_key = prev.api_key; // 不动 API key
+    state.replace_config(fresh.clone()).map_err(|e| e.to_string())?;
+    if let Some(acc) = state.account.read().clone() {
+        tauri::async_runtime::spawn(async move { acc.on_settings_changed().await; });
+    }
+    Ok(fresh)
+}
+
+/// (P1-16 + P2-25) 打开日志文件夹（panic_hook 和 slow request 都写在此处）。
+#[tauri::command]
+fn cmd_open_log_folder() -> Result<(), String> {
+    let dir = dirs::data_local_dir()
+        .map(|p| p.join("TiTiTalk"))
+        .ok_or_else(|| "cannot resolve LocalAppData".to_string())?;
+    std::fs::create_dir_all(&dir).ok();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+    }
     Ok(())
 }
 

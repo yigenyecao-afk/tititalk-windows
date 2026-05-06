@@ -57,6 +57,10 @@ export interface AppConfig {
   companion_pet_slug: string;
   /// Wave 4 — 宠物话痨度：0=静音 / 1=只关键事件 / 2=偶发+关键 (默认) / 3=频繁。
   companion_chattiness: 0 | 1 | 2 | 3;
+  /// (P0-4 跨端对齐) 录音浮窗 pill 显示开关，跟 Mac floatingPillEnabled 默认 false 对齐。
+  pill_enabled: boolean;
+  /// (P2-30 隐私) 前台 app 上下文遥测 opt-out。默认 ON 跟旧行为兼容。
+  telemetry_app_context_enabled: boolean;
 }
 
 export type PillTheme = "lantern" | "annotation" | "telegraph" | "seal";

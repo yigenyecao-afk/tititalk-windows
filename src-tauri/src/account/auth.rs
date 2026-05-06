@@ -272,11 +272,19 @@ pub async fn unbind_device(api: &ApiClient, device_id: i64) -> Result<(), ApiErr
     api.delete(&format!("/api/me/devices/{device_id}")).await
 }
 
+/// Parsed callback shape — 兼容旧（access/refresh 直接给）和新（code+state HMAC 换取）两种。
+/// 新流（P0-1 加固后）：URL 含 session_id + code + state；客户端 POST /exchange 换 token。
+/// 老流（已弃用）：URL 含 session_id + access + refresh；为兼容老 backend 临时保留 parse 路径。
+pub enum CallbackParams {
+    Code { session_id: String, code: String, state: String },
+    LegacyTokens { session_id: String, access: String, refresh: String },
+}
+
 /// Parse the deep-link callback URL. Validates scheme + path, returns
-/// `(session_id, access, refresh)` on success. Returns `Err` on any
-/// shape mismatch — caller logs and ignores (these URLs can be poked by
-/// other apps; crashing on bad input would be a DoS).
-pub fn parse_callback(url: &str) -> Result<(String, String, String), String> {
+/// CallbackParams on success. Returns `Err` on any shape mismatch — caller
+/// logs and ignores (these URLs can be poked by other apps; crashing on bad
+/// input would be a DoS).
+pub fn parse_callback(url: &str) -> Result<CallbackParams, String> {
     if !url.starts_with("tititalk://") {
         return Err(format!("scheme not tititalk: {url}"));
     }
@@ -287,9 +295,11 @@ pub fn parse_callback(url: &str) -> Result<(String, String, String), String> {
     let (_head, qs) = url
         .split_once('?')
         .ok_or_else(|| format!("no query string: {url}"))?;
-    let mut sid = None;
-    let mut acc = None;
-    let mut refr = None;
+    let mut sid: Option<String> = None;
+    let mut acc: Option<String> = None;
+    let mut refr: Option<String> = None;
+    let mut code: Option<String> = None;
+    let mut state: Option<String> = None;
     for pair in qs.split('&') {
         let mut it = pair.splitn(2, '=');
         let k = it.next().unwrap_or("");
@@ -297,16 +307,45 @@ pub fn parse_callback(url: &str) -> Result<(String, String, String), String> {
         let v = urldecode(v);
         match k {
             "session_id" => sid = Some(v),
-            "access" => acc = Some(v),
-            "refresh" => refr = Some(v),
+            "access"     => acc = Some(v),
+            "refresh"    => refr = Some(v),
+            "code"       => code = Some(v),
+            "state"      => state = Some(v),
             _ => {}
         }
     }
-    Ok((
-        sid.ok_or("missing session_id")?,
-        acc.ok_or("missing access")?,
-        refr.ok_or("missing refresh")?,
-    ))
+    let session_id = sid.ok_or("missing session_id")?;
+    // 优先认 code+state（新流，P0-1 之后 backend 默认）
+    if let (Some(c), Some(s)) = (code, state) {
+        return Ok(CallbackParams::Code { session_id, code: c, state: s });
+    }
+    if let (Some(a), Some(r)) = (acc, refr) {
+        return Ok(CallbackParams::LegacyTokens { session_id, access: a, refresh: r });
+    }
+    Err("missing code+state and no legacy tokens".to_string())
+}
+
+/// 用 (session_id, code, state) 调 POST /api/auth/desktop/exchange 换 access+refresh。
+pub async fn exchange_code(
+    api: &ApiClient,
+    session_id: &str,
+    code: &str,
+    state: &str,
+) -> Result<(String, String), ApiError> {
+    #[derive(serde::Serialize)]
+    struct ReqBody<'a> {
+        session_id: &'a str,
+        code: &'a str,
+        state: &'a str,
+    }
+    #[derive(serde::Deserialize)]
+    struct Resp {
+        access: String,
+        refresh: String,
+    }
+    let body = ReqBody { session_id, code, state };
+    let resp: Resp = api.post("/api/auth/desktop/exchange", &body, false).await?;
+    Ok((resp.access, resp.refresh))
 }
 
 fn urldecode(s: &str) -> String {
