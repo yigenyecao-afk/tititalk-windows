@@ -11,7 +11,8 @@ import {
   disable as autostartDisable,
   isEnabled as autostartIsEnabled,
 } from "@tauri-apps/plugin-autostart";
-import type { AppConfig } from "../lib/types";
+import type { AppConfig, PillTheme } from "../lib/types";
+import { migrateLegacyPillTheme } from "../PillApp";
 import TypelessSheet from "./TypelessSheet";
 import {
   TypelessCard,
@@ -101,7 +102,10 @@ export default function SettingsSheet({
   // 新 cfg patch 进来覆盖 draft——保证 sheet 在打开状态下也能即时刷新
   // (WIN-006)。父组件传进来的 cfg 也跟着变，所以 useEffect 依赖 cfg 即可。
   useEffect(() => {
-    setDraft(cfg);
+    // (v0.13.0) cfg 进入时先 normalize — 跟 Mac TypelessSettingsSheet
+    // normalizeSettingsValues 同源。pill_theme 老 lantern/annotation/telegraph/seal
+    // 自动迁移；engine/hotkey_mode/persona 等 select 防空。
+    setDraft(normalizeConfigValues(cfg));
   }, [cfg]);
   useEffect(() => {
     const handler = () => {
@@ -448,10 +452,10 @@ export default function SettingsSheet({
                   value={draft.pill_theme}
                   onChange={(e) => patch("pill_theme", e.target.value as typeof draft.pill_theme)}
                 >
-                  <option value="lantern">灯笼 · 默认（朱砂呼吸光晕）</option>
-                  <option value="annotation">批注 · 暖黄信纸便签</option>
-                  <option value="telegraph">电报 · 屏幕底等宽 ticker</option>
-                  <option value="seal">印章 · 朱砂方印章</option>
+                  <option value="typeless">简净 · 默认（毛玻璃极简横条）</option>
+                  <option value="titi">朱砂 · 品牌气泡</option>
+                  <option value="aurora">流光 · 极光波形</option>
+                  <option value="mono">素白 · 椭圆细条</option>
                 </select>
               }
             />
@@ -973,13 +977,46 @@ export default function SettingsSheet({
   );
 }
 
+/// (v0.13.0) cfg 值统一收口 — 跟 Mac TypelessSettingsSheet.normalizeSettingsValues
+/// 同源。云端旧 key（lantern/annotation/...）+ 服务端漂移值（譬如新装枚举漏改
+/// 默认）+ 手贴 cfg.json 漂出枚举的奇葩值，进 sheet 前一律映射回合法值，
+/// 防 select 渲染空 option（用户报「设置项还是空白」根因）。
+const PILL_THEMES: ReadonlySet<PillTheme> = new Set(["typeless", "titi", "aurora", "mono"]);
+const ENGINES = new Set(["tititalk_cloud", "qwen", "openai"]);
+const HOTKEY_MODES = new Set(["push_to_talk", "toggle", "hybrid"]);
+const PERSONAS = new Set(["friendly", "formal", "mixed_zh_en", "code"]);
+const POLISH_INTENSITIES = new Set(["light", "normal", "heavy"]);
+const DOUBLE_MOD_KEYS = new Set(["", "shift", "cmd", "opt", "ctrl"]);
+const MOUSE_SIDE_BTNS = new Set([0, 1, 2]);
+const PET_SLUGS = new Set(["boba", "byte-bunny", "mochi-cat", "buddy-corgi", "panda-baba"]);
+const CHATTINESS_VALUES = new Set([0, 1, 2, 3]);
+
+function normalizeConfigValues(cfg: AppConfig): AppConfig {
+  return {
+    ...cfg,
+    pill_theme: PILL_THEMES.has(cfg.pill_theme as PillTheme)
+      ? cfg.pill_theme
+      : migrateLegacyPillTheme(cfg.pill_theme as unknown as string),
+    engine: ENGINES.has(cfg.engine) ? cfg.engine : "tititalk_cloud",
+    hotkey_mode: HOTKEY_MODES.has(cfg.hotkey_mode) ? cfg.hotkey_mode : "push_to_talk",
+    stylist_persona: PERSONAS.has(cfg.stylist_persona) ? cfg.stylist_persona : "friendly",
+    polish_intensity: POLISH_INTENSITIES.has(cfg.polish_intensity) ? cfg.polish_intensity : "normal",
+    double_modifier_key: DOUBLE_MOD_KEYS.has(cfg.double_modifier_key) ? cfg.double_modifier_key : "",
+    mouse_side_button: MOUSE_SIDE_BTNS.has(cfg.mouse_side_button) ? cfg.mouse_side_button : 0,
+    companion_pet_slug: PET_SLUGS.has(cfg.companion_pet_slug) ? cfg.companion_pet_slug : "boba",
+    companion_chattiness: CHATTINESS_VALUES.has(cfg.companion_chattiness)
+      ? cfg.companion_chattiness
+      : 2,
+  };
+}
+
 function pillThemeHint(theme: AppConfig["pill_theme"]): string {
   switch (theme) {
-    case "annotation": return "暖黄便签贴桌角，仿宋体大字适合写作者";
-    case "telegraph":  return "屏幕底部一条 ticker，等宽字 + 状态电码，程序员路线";
-    case "seal":       return "朱砂方印「听 / 校 / 记」单字配题款，仪式感";
-    case "lantern":
-    default:           return "球形朱砂呼吸光晕；说话越大光越亮（默认）";
+    case "titi":      return "朱砂 — 品牌色气泡 + 方块图标";
+    case "aurora":    return "流光 — 录音时极光带流动";
+    case "mono":      return "素白 — 椭圆细条，克制不抢焦点";
+    case "typeless":
+    default:          return "简净 — 毛玻璃极简横条（默认）";
   }
 }
 

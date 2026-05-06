@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { onPipeline, getConfig } from "./lib/api";
 import type { PipelinePhase, PillTheme } from "./lib/types";
-import LanternPill from "./pill-themes/LanternPill";
-import AnnotationPill from "./pill-themes/AnnotationPill";
-import TelegraphPill from "./pill-themes/TelegraphPill";
-import SealPill from "./pill-themes/SealPill";
+/// (v0.13.0) 4 主题切到 Mac 老 4 主题对齐：typeless/titi/aurora/mono
+/// 老 Editorial 4 文件 (LanternPill/AnnotationPill/TelegraphPill/SealPill) 删
+import TypelessPill from "./pill-themes/TypelessPill";
+import TitiPill from "./pill-themes/TitiPill";
+import AuroraPill from "./pill-themes/AuroraPill";
+import MonoPill from "./pill-themes/MonoPill";
 import type { DisplayMode, PillThemeProps } from "./pill-themes/types";
 
 /// (v0.8.4 typeless 学习 P1 #5) PTT「松开即停」短引导。新 PTT 用户每次
@@ -30,7 +32,7 @@ export default function PillApp() {
   const [displayed, setDisplayed] = useState<string>("");
   const [cloudConnecting, setCloudConnecting] = useState(false);
   const [hotkeyMode, setHotkeyMode] = useState<string>("hybrid");
-  const [pillTheme, setPillTheme] = useState<PillTheme>("lantern");
+  const [pillTheme, setPillTheme] = useState<PillTheme>("typeless");
   const targetRef = useRef<string>("");
   const displayedRef = useRef<string>("");
   const rafRef = useRef<number | null>(null);
@@ -39,7 +41,7 @@ export default function PillApp() {
     getConfig()
       .then((c) => {
         setHotkeyMode(c.hotkey_mode);
-        if (c.pill_theme) setPillTheme(c.pill_theme);
+        if (c.pill_theme) setPillTheme(migrateLegacyPillTheme(c.pill_theme));
       })
       .catch(() => {});
   }, []);
@@ -135,11 +137,30 @@ export default function PillApp() {
   };
 
   switch (pillTheme) {
-    case "annotation": return <AnnotationPill {...props} />;
-    case "telegraph":  return <TelegraphPill {...props} />;
-    case "seal":       return <SealPill {...props} />;
-    case "lantern":
-    default:           return <LanternPill {...props} />;
+    case "titi":      return <TitiPill {...props} />;
+    case "aurora":    return <AuroraPill {...props} />;
+    case "mono":      return <MonoPill {...props} />;
+    case "typeless":
+    default:          return <TypelessPill {...props} />;
+  }
+}
+
+/// (v0.13.0) cloud sync 入站老 Editorial key 自动迁移到新 key。
+/// 视觉相近映射：lantern(朱砂呼吸)→titi(朱砂气泡) / annotation(便签)→aurora(流光) /
+/// telegraph(等宽 ticker)→mono(素白细条) / seal(印章)→typeless(简净)。
+export function migrateLegacyPillTheme(theme: string): PillTheme {
+  switch (theme) {
+    case "lantern":    return "titi";
+    case "annotation": return "aurora";
+    case "telegraph":  return "mono";
+    case "seal":       return "typeless";
+    case "typeless":
+    case "titi":
+    case "aurora":
+    case "mono":
+      return theme;
+    default:
+      return "typeless";
   }
 }
 

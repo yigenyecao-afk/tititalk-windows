@@ -39,19 +39,59 @@ interface ConfigUpdatedPayload {
   cfg: AppConfig;
 }
 
+/// 单击招呼 bubble — 6 句随机，跟 Mac CompanionView.greetingBubble 同源
+const GREETING_LINES = ["你好呀～", "在听呢", "嗯？", "～嗨～", "🎤 准备好了！", "戳我干嘛 😄"];
+function pickGreeting(): string {
+  return GREETING_LINES[Math.floor(Math.random() * GREETING_LINES.length)];
+}
+
 export default function CompanionApp() {
   const [snapshot, setSnapshot] = useState<PetSnapshot | null>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [overrideState, setOverrideState] = useState<PetStateId | null>(null);
+  // (v0.13.0) 单击/喂食/走开 bubble feedback；优先于 engine.bubble 显示
+  const [clickBubble, setClickBubble] = useState<string | null>(null);
   // C1+C3: 装饰商店 sheet + 当前 companion state（用于显示余额 + 已解锁列表）
   const [shopOpen, setShopOpen] = useState(false);
   const [companionState, setCompanionState] = useState<CompanionStateDTO | null>(null);
   const engineRef = useRef<PetEngine | null>(null);
 
-  const handleClick = () => {
-    // 单击 → 短 wave 0.7s，不进 PetEngine
+  // (v0.13.0) 启动挥手致意 — 让用户看到宠物「活的」
+  useEffect(() => {
     setOverrideState("waving");
-    window.setTimeout(() => setOverrideState(null), 700);
+    const t = window.setTimeout(() => setOverrideState(null), 1000);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  // (v0.13.0) Fidget tick — 每 10s 检查 30% 概率随机 micro-action 1s
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      // 只在 idle + 没 override 时触发，不打扰录音/失败/等候等真状态
+      if (snapshot?.state !== "idle" || overrideState !== null) return;
+      if (Math.random() >= 0.3) return;
+      const actions: PetStateId[] = ["waving", "jumping", "review"];
+      const a = actions[Math.floor(Math.random() * actions.length)];
+      setOverrideState(a);
+      window.setTimeout(() => setOverrideState(null), 1000);
+    }, 10_000);
+    return () => window.clearInterval(t);
+  }, [snapshot?.state, overrideState]);
+
+  const handleClick = () => {
+    // 单击 → 挥手 + bubble 招呼（让用户立刻看到反馈）
+    setOverrideState("waving");
+    setClickBubble(pickGreeting());
+    window.setTimeout(() => {
+      setOverrideState(null);
+      setClickBubble(null);
+    }, 1500);
+  };
+
+  // (v0.13.0) 鼠标悬停 → 挥手反应
+  const handleMouseEnter = () => {
+    if (overrideState !== null) return;
+    setOverrideState("waving");
+    window.setTimeout(() => setOverrideState(null), 600);
   };
 
   const handleMenu = (e: React.MouseEvent) => {
@@ -59,16 +99,22 @@ export default function CompanionApp() {
   };
 
   const handleFeed = async () => {
-    await companionStateManager.event("feed");
     setOverrideState("jumping");
-    window.setTimeout(() => setOverrideState(null), 800);
+    setClickBubble("好吃！😋");
+    await companionStateManager.event("feed");
+    window.setTimeout(() => {
+      setOverrideState(null);
+      setClickBubble(null);
+    }, 1500);
   };
 
   const handleGoAway = () => {
     // 「走开」= 让 main webview 把 cfg.companion_enabled 写回 false 让下次启动不出现。
-    // 跨 webview 通信走 Tauri emitTo("main", ...)；main App.tsx 在 useEffect 监听。
-    void invoke("cmd_companion_hide");
-    void emitTo("main", "companion-go-away", {});
+    setClickBubble("再见～👋");
+    window.setTimeout(() => {
+      void invoke("cmd_companion_hide");
+      void emitTo("main", "companion-go-away", {});
+    }, 800);
   };
 
   useEffect(() => {
@@ -162,8 +208,8 @@ export default function CompanionApp() {
   }
 
   return (
-    <div className="companion-stage">
-      <PetBubble text={snapshot.bubble} />
+    <div className="companion-stage" onMouseEnter={handleMouseEnter}>
+      <PetBubble text={clickBubble ?? snapshot.bubble} />
       <Pet
         snapshot={snapshot}
         overrideState={overrideState}

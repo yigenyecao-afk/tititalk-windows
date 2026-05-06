@@ -63,7 +63,10 @@ export interface AppConfig {
   telemetry_app_context_enabled: boolean;
 }
 
-export type PillTheme = "lantern" | "annotation" | "telegraph" | "seal";
+/// (v0.13.0) 4 主题对齐 Mac 老 4 主题；老 Editorial key（lantern/annotation/
+/// telegraph/seal）由 SettingsSheet 启动时 normalize + cloud sync 入站迁移
+/// 自动转新 key 不再出现在新 type 里。
+export type PillTheme = "typeless" | "titi" | "aurora" | "mono";
 
 export type PolishIntensity = "light" | "normal" | "heavy";
 
