@@ -127,6 +127,13 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
+        // (v0.12.0 2026-05-06) Login startup — registers `HKCU\...\Run` so
+        // Windows boots TiTiTalk in the background. Frontend toggle in
+        // Settings sheet calls `plugin:autostart|enable/disable` to switch.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(app_state.clone())
         .invoke_handler(tauri::generate_handler![
             cmd_get_config,

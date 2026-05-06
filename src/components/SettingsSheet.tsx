@@ -6,6 +6,11 @@ import {
   dismissHotwordCandidate,
   clearAllHotwordCandidates,
 } from "../lib/api";
+import {
+  enable as autostartEnable,
+  disable as autostartDisable,
+  isEnabled as autostartIsEnabled,
+} from "@tauri-apps/plugin-autostart";
 import type { AppConfig } from "../lib/types";
 import TypelessSheet from "./TypelessSheet";
 import {
@@ -56,6 +61,41 @@ export default function SettingsSheet({
   const [saving, setSaving] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [testResult, setTestResult] = useState("");
+  // (v0.12.0 2026-05-06) launch-at-login: plugin-autostart 直接读 Win 注册表，
+  // 不在 cfg 里持久化（双源真相会漂）。首次启动如果未设置 → 默认 enable，
+  // 跟 Mac 默认 ON 同步。
+  const [autostart, setAutostart] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cur = await autostartIsEnabled();
+        if (!cancelled) {
+          if (!cur) {
+            // 首次安装默认 ON
+            try { await autostartEnable(); } catch {}
+            if (!cancelled) setAutostart(true);
+          } else {
+            setAutostart(true);
+          }
+        }
+      } catch {
+        if (!cancelled) setAutostart(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  async function toggleAutostart(next: boolean) {
+    setAutostart(next);
+    try {
+      if (next) await autostartEnable();
+      else await autostartDisable();
+    } catch (e) {
+      // 失败回滚
+      setAutostart(!next);
+      console.warn("[autostart] toggle failed:", e);
+    }
+  }
 
   // FIX-23 (qa-2026-05-03): 监听 ConflictDialog 解决冲突后广播的事件，把
   // 新 cfg patch 进来覆盖 draft——保证 sheet 在打开状态下也能即时刷新
@@ -97,6 +137,33 @@ export default function SettingsSheet({
   return (
     <TypelessSheet open={open} title="设置" onClose={onClose}>
       <div className="space-y-6">
+        {/* (v0.12.0) IME 澄清横幅 — 用户经常问"为什么没在系统输入法列表" */}
+        <div className="text-xs text-ink-500 bg-ink-50 border border-ink-200 rounded px-3 py-2">
+          ℹ️ TiTiTalk 不是系统输入法。任何输入法激活时，按 hotkey（默认 F1）就能录音 — 无需切换输入源。
+        </div>
+
+        {/* 系统启动 */}
+        <section>
+          <TypelessSectionHeader title="系统启动" subtitle="开机自启 · 重启电脑后无需手动开" />
+          <TypelessCard>
+            <TypelessRow
+              iconNode={<Icon name="engine" />}
+              iconColor="#10B981"
+              title="登录时自动启动"
+              subtitle="启动后只在系统托盘，不打扰使用"
+              trailing={
+                <input
+                  type="checkbox"
+                  className="w-5 h-5"
+                  checked={autostart === true}
+                  disabled={autostart === null}
+                  onChange={(e) => toggleAutostart(e.target.checked)}
+                />
+              }
+            />
+          </TypelessCard>
+        </section>
+
         {/* 听写 */}
         <section>
           <TypelessSectionHeader title="听写" subtitle="语音识别引擎与语言" />
