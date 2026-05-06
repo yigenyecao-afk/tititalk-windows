@@ -251,15 +251,25 @@ pub fn run() {
                 acc_for_boot.bootstrap().await;
             });
 
-            // (P1 hotkey→partial 加速 2026-05-05) 注册 ASR prewarmer。
-            // 跟 account 绑定 — prewarmer 内部 run_one 自检 account.read().is_none()
-            // 时 30s 后再试，bootstrap 完成自动开始真正的 prewarm。
-            // 同时后台预热 cpal/WASAPI 子系统：首次 default_input_device 冷加载
-            // ~50-300ms 在 launch 后跑掉，省下次 hotkey 同步等待。
-            asr_prewarm::ensure_started(app_state.clone());
-            asr_prewarm::enable();
-            tauri::async_runtime::spawn_blocking(|| {
-                audio::prewarm_audio_device();
+            // (P1 hotkey→partial 加速 2026-05-05; v0.10.1 hotfix)
+            // 推迟到 setup 闭包返回 + tauri runtime 真正进入主事件循环之后再起，
+            // 避免 setup 阶段 spawn_blocking + cpal::default_host 在 Windows 某些
+            // 机器上崩死整个 process（v0.10.0 用户实测「装好但起不来」根因）。
+            //
+            // 用 std::thread::spawn + catch_unwind：
+            //   - std::thread 不依赖 tauri/tokio runtime
+            //   - 800ms 等 setup 全部完成 + main loop 启动
+            //   - catch_unwind 接住任何 cpal driver 异常，prewarm 失败也不影响 app
+            let app_state_for_prewarm = app_state.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    asr_prewarm::ensure_started(app_state_for_prewarm);
+                    asr_prewarm::enable();
+                }));
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    audio::prewarm_audio_device();
+                }));
             });
 
             // Deep-link callback — forwarded to Account.
