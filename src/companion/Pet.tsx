@@ -105,7 +105,7 @@ const OVERLAY_EMOJI: Record<string, string> = {
 /// emoji fallback 渲染：
 /// - idle: 呼吸缩放 0.95→1.05
 /// - waving: 左右 wiggle ±10°
-/// - running / running-left / running-right: 上下 bobbing + 朝向
+/// - running: 上下 bobbing
 /// - jumping: translateY 起伏
 /// - failed: 微微下沉 + 灰度
 /// - waiting: 缩小 0.92 + 半透明

@@ -16,9 +16,10 @@ interface Props {
   onHide1h: () => void;
   onShare: () => void;
   onGoAway: () => void;
+  onShop: () => void;  // C1+C3: 装饰商店
 }
 
-export function PetContextMenu({ x, y, onClose, onFeed, onRename, onHide1h, onShare, onGoAway }: Props) {
+export function PetContextMenu({ x, y, onClose, onFeed, onRename, onHide1h, onShare, onGoAway, onShop }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -53,6 +54,7 @@ export function PetContextMenu({ x, y, onClose, onFeed, onRename, onHide1h, onSh
       onClick={(e) => e.stopPropagation()}
     >
       <button onClick={() => { onFeed(); onClose(); }}>🍪 喂食 (+5 饱食度)</button>
+      <button onClick={() => { onShop(); onClose(); }}>🛍️ 装饰商店</button>
       <button onClick={() => { onRename(); onClose(); }}>✏️ 改名</button>
       <button onClick={() => { onHide1h(); onClose(); }}>🙈 隐藏 1 小时</button>
       <button onClick={() => { onShare(); onClose(); }}>🖼 导出分享卡片</button>

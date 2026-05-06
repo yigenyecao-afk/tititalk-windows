@@ -19,6 +19,7 @@ import type { AppConfig } from "../lib/types";
 import { Pet } from "./Pet";
 import { PetBubble } from "./PetBubble";
 import { PetContextMenu } from "./PetContextMenu";
+import { DecorationStore } from "./DecorationStore";
 import {
   PetEngine,
   findPet,
@@ -26,6 +27,7 @@ import {
 } from "./PetEngine";
 import type { PetSnapshot, PetStateId, PetsManifest } from "./types";
 import { companionStateManager } from "./CompanionStateManager";
+import type { CompanionStateDTO } from "../lib/wave3-api";
 
 const HIDE_1H_MS = 60 * 60 * 1000;
 const FOCUS_DURATION_MS = 25 * 60 * 1000; // 25min 番茄
@@ -47,6 +49,9 @@ export default function CompanionApp() {
   const [overrideState, setOverrideState] = useState<PetStateId | null>(null);
   const [focusEndsAt, setFocusEndsAt] = useState<number | null>(null);
   const [focusRemain, setFocusRemain] = useState<string>("");
+  // C1+C3: 装饰商店 sheet + 当前 companion state（用于显示余额 + 已解锁列表）
+  const [shopOpen, setShopOpen] = useState(false);
+  const [companionState, setCompanionState] = useState<CompanionStateDTO | null>(null);
   const engineRef = useRef<PetEngine | null>(null);
 
   // 专心模式倒计时显示（每秒刷一次）
@@ -117,7 +122,8 @@ export default function CompanionApp() {
       const customName = window.localStorage.getItem(`companion:nameOf:${snapshot.meta.slug}`);
       const dayChars = cloudState?.day_chars_today ?? 0;
       const skillLvl = cloudState?.skill_lvl ?? 1;
-      const streakDays = 0; // streak 不在 companion DTO 里 — 留待 Stage 3
+      // C1 (2026-05-06): streak 现在已在 DTO 里
+      const streakDays = cloudState?.streak_days ?? 0;
       const savedMinutes = dayChars * 0.0032 * 60; // 跟后端公式同源（chars*0.8/250 min*60s）
       const base64 = await renderShareCard({
         pet: snapshot.meta,
@@ -193,10 +199,12 @@ export default function CompanionApp() {
         if (s) {
           engine?.setDayChars(s.day_chars_today, s.day_chars_record);
           engine?.setQuotaPercent(0); // quota 由 main webview 60s 推
+          setCompanionState(s);  // C1: 给 streak chip + 装饰商店
         }
       });
       const offState = companionStateManager.subscribe((s) => {
         engine?.setDayChars(s.day_chars_today, s.day_chars_record);
+        setCompanionState(s);  // C1: 同步给 chip
       });
       unsubs.push(offState);
 
@@ -261,7 +269,22 @@ export default function CompanionApp() {
           onHide1h={handleHide1h}
           onShare={handleShare}
           onGoAway={handleGoAway}
+          onShop={() => setShopOpen(true)}
         />
+      )}
+      {/* C1+C3 装饰商店 */}
+      {shopOpen && companionState && (
+        <DecorationStore
+          state={companionState}
+          onClose={() => setShopOpen(false)}
+          onUpdate={(s) => setCompanionState(s)}
+        />
+      )}
+      {/* C1 streak chip：右下角，仅 streak >= 2 时显示防杂讯 */}
+      {companionState && companionState.streak_days >= 2 && (
+        <div className="streak-chip" title={`已连续 ${companionState.streak_days} 天 · 历史最长 ${companionState.streak_record}`}>
+          🔥 {companionState.streak_days} · 💰 {companionState.coins_balance}
+        </div>
       )}
     </div>
   );

@@ -1,10 +1,11 @@
 // Wave 4 — companion 共享类型。
 // 跟 public/pets/pets.json schema 一一对应。
 
+// P1-4 (2026-05-06): 删了 running-right / running-left 两个死代码 state — 引入时
+// 计划做精灵图朝向区分，最终所有 set state 路径都用 running，无人 set 这两值。
+// 留着 review 是因为 polishing phase → state="review" 真在用（PetEngine.ts:196）。
 export type PetStateId =
   | "idle"
-  | "running-right"
-  | "running-left"
   | "waving"
   | "jumping"
   | "failed"

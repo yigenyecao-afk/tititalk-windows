@@ -275,6 +275,24 @@ export interface CompanionStateDTO {
   version: number;          // 乐观锁
   day_chars_today: number;
   day_chars_record: number;
+  // C1 (2026-05-06): 连击 + 专注币
+  streak_days: number;
+  streak_record: number;
+  coins_balance: number;
+  unlocked_decorations: string[];
+}
+
+export interface SeasonalDecorationDTO {
+  slug: string;
+  name: string;
+  emoji: string;
+  is_free: boolean;
+  cost: number;
+  end_date: string | null;
+}
+
+export interface SeasonalDecorationsDTO {
+  items: SeasonalDecorationDTO[];
 }
 
 export type CompanionEventType =
@@ -307,4 +325,17 @@ export function putCompanionState(
 
 export function postCompanionEvent(ev: CompanionEventIn): Promise<CompanionStateDTO> {
   return authedPost<CompanionStateDTO>("/api/me/companion/events", ev);
+}
+
+// C3 (2026-05-06): 节日装饰当前可用列表
+export function getSeasonalDecorations(): Promise<SeasonalDecorationsDTO> {
+  return authedGet<SeasonalDecorationsDTO>("/api/me/companion/decorations/seasonal");
+}
+
+// C1+C3: 用专注币（或 free 时间窗）解锁装饰
+export function spendForDecoration(slug: string): Promise<CompanionStateDTO> {
+  return authedPost<CompanionStateDTO>(
+    "/api/me/companion/decorations/spend",
+    { decoration_slug: slug },
+  );
 }

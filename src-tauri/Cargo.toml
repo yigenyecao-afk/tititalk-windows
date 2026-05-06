@@ -1,6 +1,6 @@
 [package]
 name = "tititalk"
-version = "0.10.3"
+version = "0.11.0"
 description = "TiTiTalk Windows — voice-to-text input"
 authors = ["TiTiTalk"]
 edition = "2021"

@@ -217,3 +217,81 @@
   .pet-bubble { background: #1f1f1f; color: #f1f1f1; border-color: rgba(255, 154, 65, 0.6); }
   .pet-bubble::after { background: #1f1f1f; border-color: rgba(255, 154, 65, 0.6); }
 }
+
+/* ---- C1 streak chip + C3 装饰商店 (2026-05-06) ------------------------ */
+.streak-chip {
+  position: absolute;
+  bottom: 4px;
+  right: 6px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 10px;
+  color: #aa4400;
+  background: rgba(255, 245, 220, 0.92);
+  border: 1px solid rgba(255, 154, 65, 0.5);
+  border-radius: 999px;
+  padding: 1px 7px;
+  pointer-events: none;
+  letter-spacing: 0.2px;
+}
+@media (prefers-color-scheme: dark) {
+  .streak-chip { background: #2a1f12; color: #ffb280; border-color: rgba(255, 154, 65, 0.6); }
+}
+.store-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.store-sheet {
+  width: 360px;
+  max-height: 480px;
+  overflow-y: auto;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  padding: 16px;
+}
+.store-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.store-title { font-size: 15px; font-weight: 600; flex: 1; }
+.store-balance {
+  font-size: 12px;
+  color: #aa4400;
+  background: rgba(255, 245, 220, 0.9);
+  border: 1px solid rgba(255, 154, 65, 0.5);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-family: ui-monospace, "SF Mono", monospace;
+}
+.store-close { background: transparent; border: 0; font-size: 22px; color: #888; cursor: pointer; line-height: 1; }
+.store-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.store-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  border: 1px solid #e6e6e6;
+  border-radius: 8px;
+  background: #fafafa;
+  cursor: pointer;
+  transition: all 120ms ease;
+  font-size: 11px;
+}
+.store-item:hover:not(:disabled) { background: #fff5e8; border-color: rgba(255, 154, 65, 0.5); }
+.store-item:disabled { cursor: not-allowed; opacity: 0.55; }
+.store-item.owned { background: #e8f5e8; border-color: #92cf92; }
+.store-item.locked { opacity: 0.45; }
+.store-emoji { font-size: 26px; line-height: 1; }
+.store-name { font-size: 11px; font-weight: 500; }
+.store-price { font-size: 10px; color: #888; }
+.store-empty, .store-error { padding: 16px; color: #888; text-align: center; font-size: 12px; }
+.store-error { color: #c0392b; }
+@media (prefers-color-scheme: dark) {
+  .store-sheet { background: #1f1f1f; color: #f0f0f0; }
+  .store-item { background: #2a2a2a; border-color: #3a3a3a; }
+  .store-item:hover:not(:disabled) { background: #3a2a18; }
+  .store-item.owned { background: #1d3018; border-color: #4a7a4a; }
+}

@@ -18,6 +18,7 @@ export type BubbleTrigger =
   | "quota-warn-80"        // 配额到 80%
   | "quota-warn-95"        // 配额到 95%
   | "quota-exhausted"      // 配额 = 0
+  | "quota-recovered"      // P1-5: 第二天 quota 恢复退出 failed
   | "idle-long"            // 5+ 分钟没说话
   | "app-switch-ide"       // 切到 IDE
   | "app-switch-meeting"   // 切到 Zoom/Teams 等
@@ -80,6 +81,12 @@ export const BUBBLES: Record<BubbleTrigger, BubbleLine[]> = {
     { text: "今日额度已用尽。", persona: "formal" },
     { text: "out of fuel 🪫", persona: "mixed_zh_en" },
     { text: "// ENOQUOTA", persona: "code" },
+  ],
+  "quota-recovered": [
+    { text: "满血复活！继续干吧。", persona: "friendly" },
+    { text: "配额已恢复。", persona: "formal" },
+    { text: "back online ✨", persona: "mixed_zh_en" },
+    { text: "// quota: replenished", persona: "code" },
   ],
   "idle-long": [
     { text: "在看什么呢？", persona: "friendly" },

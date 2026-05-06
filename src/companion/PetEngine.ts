@@ -172,6 +172,12 @@ export class PetEngine {
       this.tryBubble("quota-exhausted", true);
       this.update({ state: "failed" });
     }
+    // P1-5 (2026-05-06): quota 自愈反向逻辑 — 第二天 quota reset 后宠物
+    // 应该退出 failed。之前没此分支，宠物被卡 failed 直到下次录音 phase 切走。
+    else if (prev >= 80 && p < 80 && this.snapshot.state === "failed") {
+      this.tryBubble("quota-recovered", true);
+      this.update({ state: "idle" });
+    }
   }
 
   // ------ 内部信号处理 ------
@@ -197,8 +203,15 @@ export class PetEngine {
         break;
       case "done":
         this.update({ state: "idle" });
-        // 破纪录判断：dayChars 已在外部 set，简单比较
-        if (this.dayChars > 0 && this.dayChars >= this.dayCharsRecord) {
+        // P0-3 (2026-05-06): record-broken 必须 dayCharsRecord > 0 才触发。之前
+        // dayCharsRecord 初始 0，新用户第一次录音 dayChars >= 0 永真 → 自动
+        // 「破纪录」拿 +10 mood +1 lvl 大礼包。改成「破自己之前峰值」语义：
+        // 必须有过非零纪录才算破。
+        if (
+          this.dayChars > 0 &&
+          this.dayCharsRecord > 0 &&
+          this.dayChars > this.dayCharsRecord
+        ) {
           this.tryBubble("session-record-broken", true, { chars: this.dayChars });
           this.update({ state: "jumping" });
           window.setTimeout(() => this.update({ state: "idle" }), 1200);
