@@ -15,8 +15,6 @@ interface Props {
   overrideState?: PetStateId | null;
   /// 右键菜单触发器
   onMenu?: (e: React.MouseEvent) => void;
-  /// 双击 → 父级开「专心模式」25min
-  onDoubleClick?: () => void;
   /// 单击 → 父级触发 wave 0.7s
   onClick?: () => void;
 }
@@ -24,7 +22,7 @@ interface Props {
 const SPRITE_WIDTH = 128; // 单帧像素 — petdex 默认 128x128
 const SPRITE_HEIGHT = 128;
 
-export function Pet({ snapshot, overrideState, onMenu, onDoubleClick, onClick }: Props) {
+export function Pet({ snapshot, overrideState, onMenu, onClick }: Props) {
   const stateId = overrideState ?? snapshot.state;
   const stateMeta = snapshot.meta.states[stateId] ?? snapshot.meta.states.idle;
   const spriteOk = useSpriteAvailable(snapshot.meta.spritesheet);
@@ -72,7 +70,6 @@ export function Pet({ snapshot, overrideState, onMenu, onDoubleClick, onClick }:
       onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
       onClick={onClick}
-      onDoubleClick={onDoubleClick}
     >
       <div className="pet-shadow" />
       {spriteOk ? (

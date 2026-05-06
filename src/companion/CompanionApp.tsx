@@ -29,10 +29,6 @@ import type { PetSnapshot, PetStateId, PetsManifest } from "./types";
 import { companionStateManager } from "./CompanionStateManager";
 import type { CompanionStateDTO } from "../lib/wave3-api";
 
-const HIDE_1H_MS = 60 * 60 * 1000;
-const FOCUS_DURATION_MS = 25 * 60 * 1000; // 25min 番茄
-const HIDE_1H_KEY = "companion:hideUntil";
-
 interface QuotaPayload {
   percent: number;
   day_chars?: number;
@@ -47,44 +43,15 @@ export default function CompanionApp() {
   const [snapshot, setSnapshot] = useState<PetSnapshot | null>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [overrideState, setOverrideState] = useState<PetStateId | null>(null);
-  const [focusEndsAt, setFocusEndsAt] = useState<number | null>(null);
-  const [focusRemain, setFocusRemain] = useState<string>("");
   // C1+C3: 装饰商店 sheet + 当前 companion state（用于显示余额 + 已解锁列表）
   const [shopOpen, setShopOpen] = useState(false);
   const [companionState, setCompanionState] = useState<CompanionStateDTO | null>(null);
   const engineRef = useRef<PetEngine | null>(null);
 
-  // 专心模式倒计时显示（每秒刷一次）
-  useEffect(() => {
-    if (focusEndsAt == null) {
-      setFocusRemain("");
-      return;
-    }
-    const tick = () => {
-      const left = focusEndsAt - Date.now();
-      if (left <= 0) {
-        setFocusEndsAt(null);
-        setFocusRemain("");
-        return;
-      }
-      const m = Math.floor(left / 60_000);
-      const s = Math.floor((left % 60_000) / 1000);
-      setFocusRemain(`${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`);
-    };
-    tick();
-    const t = window.setInterval(tick, 1000);
-    return () => window.clearInterval(t);
-  }, [focusEndsAt]);
-
   const handleClick = () => {
     // 单击 → 短 wave 0.7s，不进 PetEngine
     setOverrideState("waving");
     window.setTimeout(() => setOverrideState(null), 700);
-  };
-
-  const handleDoubleClick = () => {
-    // 双击 → 进 / 退 25min 专心模式
-    setFocusEndsAt((cur) => (cur ? null : Date.now() + FOCUS_DURATION_MS));
   };
 
   const handleMenu = (e: React.MouseEvent) => {
@@ -95,57 +62,6 @@ export default function CompanionApp() {
     await companionStateManager.event("feed");
     setOverrideState("jumping");
     window.setTimeout(() => setOverrideState(null), 800);
-  };
-
-  const handleRename = () => {
-    const name = window.prompt("给 ta 起个新名字（仅本地显示）：", snapshot?.meta.name ?? "");
-    if (name && name.trim()) {
-      window.localStorage.setItem(`companion:nameOf:${snapshot?.meta.slug}`, name.trim());
-    }
-  };
-
-  const handleHide1h = async () => {
-    window.localStorage.setItem(HIDE_1H_KEY, String(Date.now() + HIDE_1H_MS));
-    try { await invoke("cmd_companion_hide"); } catch {}
-    // 1h 后自动恢复
-    window.setTimeout(async () => {
-      try { await invoke("cmd_companion_show"); } catch {}
-    }, HIDE_1H_MS);
-  };
-
-  const handleShare = async () => {
-    if (!snapshot) return;
-    try {
-      const { renderShareCard } = await import("./ShareCard");
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const cloudState = companionStateManager.current();
-      const customName = window.localStorage.getItem(`companion:nameOf:${snapshot.meta.slug}`);
-      const dayChars = cloudState?.day_chars_today ?? 0;
-      const skillLvl = cloudState?.skill_lvl ?? 1;
-      // C1 (2026-05-06): streak 现在已在 DTO 里
-      const streakDays = cloudState?.streak_days ?? 0;
-      const savedMinutes = dayChars * 0.0032 * 60; // 跟后端公式同源（chars*0.8/250 min*60s）
-      const base64 = await renderShareCard({
-        pet: snapshot.meta,
-        petName: customName ?? snapshot.meta.name,
-        dayChars,
-        savedMinutes: dayChars * 0.0032,
-        streakDays,
-        skillLvl,
-      });
-      void savedMinutes;
-      const target = await save({
-        defaultPath: `${snapshot.meta.slug}-${new Date().toISOString().slice(0, 10)}.png`,
-        filters: [{ name: "PNG 图片", extensions: ["png"] }],
-      });
-      if (!target) return;
-      await invoke("cmd_companion_save_share_card", {
-        path: target,
-        dataBase64: base64,
-      });
-    } catch (e) {
-      console.warn("[companion] share-card failed:", e);
-    }
   };
 
   const handleGoAway = () => {
@@ -245,29 +161,21 @@ export default function CompanionApp() {
     return null; // 资源没就绪前，透明窗口什么都不显示
   }
 
-  // 专心模式：bubble 抑制 + sprite 加 focus-pulse 光晕，剩余时间显示底部
-  const inFocus = focusEndsAt != null;
-
   return (
-    <div className={"companion-stage" + (inFocus ? " focus-pulse" : "")}>
-      <PetBubble text={inFocus ? "🍅 专心中…" : snapshot.bubble} />
+    <div className="companion-stage">
+      <PetBubble text={snapshot.bubble} />
       <Pet
         snapshot={snapshot}
         overrideState={overrideState}
         onClick={handleClick}
-        onDoubleClick={handleDoubleClick}
         onMenu={handleMenu}
       />
-      {inFocus && <div className="focus-timer">{focusRemain}</div>}
       {menuPos && (
         <PetContextMenu
           x={menuPos.x}
           y={menuPos.y}
           onClose={() => setMenuPos(null)}
           onFeed={handleFeed}
-          onRename={handleRename}
-          onHide1h={handleHide1h}
-          onShare={handleShare}
           onGoAway={handleGoAway}
           onShop={() => setShopOpen(true)}
         />

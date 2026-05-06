@@ -1,7 +1,7 @@
 {
-  "version": 1,
+  "version": 2,
   "schema": "petdex-compat-v1",
-  "comment": "TiTiTalk Wave 4 — 5 只首发宠物清单。spritesheet/sound 字段空字符串 = client fallback 到 emoji；填了 url 就走 sprite 渲染。9 个标准状态行（idle/run-r/run-l/wave/jump/fail/wait/run/review）跟 petdex 1:1。frames/duration 直接抄 petdex 默认 (idle=6×1100, run=8×1060, wave=4×700, jump=5×840, fail=5×900, wait=4×1200, review=4×900)。",
+  "comment": "TiTiTalk Wave 4 — 5 只首发宠物清单。v2 (2026-05-06) 砍 boxcat/punchy/scoop（盒/手套/甜筒不是活物），换成 mochi-cat/buddy-corgi/panda-baba（猫/狗/熊猫）。Mac PetMeta.swift 同源；改这里要同步改那边。spritesheet/sound 字段空字符串 = client fallback 到 emoji；填了 url 就走 sprite 渲染。",
   "pets": [
     {
       "slug": "boba",
@@ -28,7 +28,7 @@
       "name": "Byte Bunny",
       "vibe": "focused",
       "emoji": "🐰",
-      "tagline": "抱着键盘键的程序员兔，最爱代码评审。",
+      "tagline": "敲键盘的程序员兔，最爱代码评审。",
       "spritesheet": "",
       "sound": "",
       "states": {
@@ -44,11 +44,11 @@
       }
     },
     {
-      "slug": "boxcat",
-      "name": "Boxcat",
+      "slug": "mochi-cat",
+      "name": "Mochi",
       "vibe": "playful",
-      "emoji": "📦",
-      "tagline": "纸箱里的小猫，会突然跳出来吓你一跳。",
+      "emoji": "🐱",
+      "tagline": "爱听打字声的小猫，偶尔伸爪子要摸摸。",
       "spritesheet": "",
       "sound": "",
       "states": {
@@ -64,31 +64,31 @@
       }
     },
     {
-      "slug": "punchy",
-      "name": "Punchy",
-      "vibe": "heroic",
-      "emoji": "🥊",
-      "tagline": "戴红拳套的拳击狗，深夜赶稿的硬汉。",
-      "spritesheet": "",
-      "sound": "",
-      "states": {
-        "idle":          { "row": 0, "frames": 6, "durationMs": 1100 },
-        "running-right": { "row": 1, "frames": 8, "durationMs": 1060 },
-        "running-left":  { "row": 2, "frames": 8, "durationMs": 1060 },
-        "waving":        { "row": 3, "frames": 4, "durationMs": 700 },
-        "jumping":       { "row": 4, "frames": 5, "durationMs": 840 },
-        "failed":        { "row": 5, "frames": 5, "durationMs": 900 },
-        "waiting":       { "row": 6, "frames": 4, "durationMs": 1200 },
-        "running":       { "row": 7, "frames": 8, "durationMs": 1060 },
-        "review":        { "row": 8, "frames": 4, "durationMs": 900 }
-      }
-    },
-    {
-      "slug": "scoop",
-      "name": "Scoop",
+      "slug": "buddy-corgi",
+      "name": "Buddy",
       "vibe": "cheerful",
-      "emoji": "🍦",
-      "tagline": "总是笑眯眯的甜筒，破纪录时最先跳起来。",
+      "emoji": "🐶",
+      "tagline": "尾巴永远在摇的柯基，每次说话都会蹦跶一下。",
+      "spritesheet": "",
+      "sound": "",
+      "states": {
+        "idle":          { "row": 0, "frames": 6, "durationMs": 1100 },
+        "running-right": { "row": 1, "frames": 8, "durationMs": 1060 },
+        "running-left":  { "row": 2, "frames": 8, "durationMs": 1060 },
+        "waving":        { "row": 3, "frames": 4, "durationMs": 700 },
+        "jumping":       { "row": 4, "frames": 5, "durationMs": 840 },
+        "failed":        { "row": 5, "frames": 5, "durationMs": 900 },
+        "waiting":       { "row": 6, "frames": 4, "durationMs": 1200 },
+        "running":       { "row": 7, "frames": 8, "durationMs": 1060 },
+        "review":        { "row": 8, "frames": 4, "durationMs": 900 }
+      }
+    },
+    {
+      "slug": "panda-baba",
+      "name": "Baba",
+      "vibe": "heroic",
+      "emoji": "🐼",
+      "tagline": "慢条斯理的大熊猫，会安静地听你讲完一长段。",
       "spritesheet": "",
       "sound": "",
       "states": {
