@@ -3,6 +3,7 @@ mod account;
 mod app_context;
 mod asr;
 mod asr_prewarm;
+mod asr_local;
 mod asr_stream;
 mod assistant;
 mod audio;

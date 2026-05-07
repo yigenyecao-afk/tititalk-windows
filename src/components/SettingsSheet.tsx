@@ -186,6 +186,7 @@ export default function SettingsSheet({
                   }
                 >
                   <option value="tititalk_cloud">TiTiTalk 云端</option>
+                  <option value="local">本地引擎 · 离线（SenseVoice）</option>
                   <option value="qwen">{proUnlocked ? "" : "🔒 "}百炼 Qwen</option>
                   <option value="openai">{proUnlocked ? "" : "🔒 "}OpenAI</option>
                 </select>
@@ -846,7 +847,7 @@ export default function SettingsSheet({
 /// 默认）+ 手贴 cfg.json 漂出枚举的奇葩值，进 sheet 前一律映射回合法值，
 /// 防 select 渲染空 option（用户报「设置项还是空白」根因）。
 // (v0.13.4 返璞归真) PILL_THEMES 砍 — 永远 minimal
-const ENGINES = new Set(["tititalk_cloud", "qwen", "openai"]);
+const ENGINES = new Set(["tititalk_cloud", "local", "qwen", "openai"]);
 const HOTKEY_MODES = new Set(["push_to_talk", "toggle", "hybrid"]);
 const PERSONAS = new Set(["friendly", "formal", "mixed_zh_en", "code"]);
 const POLISH_INTENSITIES = new Set(["light", "normal", "heavy"]);

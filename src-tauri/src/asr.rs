@@ -4,6 +4,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::Manager; // for `app_handle.path()`
 
 use crate::audio::CapturedAudio;
 use crate::config::AppConfig;
@@ -86,6 +87,17 @@ pub async fn transcribe(
 ) -> anyhow::Result<String> {
     match cfg.engine.as_str() {
         "tititalk_cloud" => tititalk_cloud_transcribe(cfg, audio, state).await,
+        // (v0.14.0 M1) 本地 ASR — sherpa-onnx + SenseVoice int8，模型打包进
+        // installer，装完即用。`pro_unlocked` 闸口由调用方决定是否暴露入口；
+        // 这里只负责跑模型不做 license 检查（M1 双向 fallback 用得到此函数）。
+        "local" => {
+            let handle = state
+                .app_handle
+                .read()
+                .clone()
+                .ok_or_else(|| anyhow!("AppHandle 未就绪"))?;
+            crate::asr_local::transcribe(audio, &handle).await
+        }
         // BYOK direct paths — require user-supplied key AND pro_unlocked.
         // Enforced server-side too (license + 402), but the client-side
         // check gives an immediate friendly error instead of a wasted

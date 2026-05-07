@@ -23,3 +23,8 @@ src-tauri/gen/schemas/
 *.msi
 *.zip
 release/
+
+# (v0.14.0) Local SKU 模型 — GHA workflow 下载 SenseVoice ~165MB tar.bz2 → 解压后
+# 注入到 src-tauri/resources/sherpa-models/。本地手测想跑 local 也走 GHA 路径或
+# 手动 curl 下载到这里，**不进 git**（仓库大小敏感）。
+src-tauri/resources/sherpa-models/

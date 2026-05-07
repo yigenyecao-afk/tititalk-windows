@@ -16,6 +16,14 @@ jobs:
       # 2023+ 起为 read-only，必须显式开。`contents: write` 同时盖了 tag
       # push、release create、release upload assets 三件事，不必再细分。
       contents: write
+    # (v0.14.0 双 SKU) matrix 跑 Cloud + Local 两个 flavor。SenseVoice 模型
+    # ~241MB 通过 Git LFS 或 release-time 下载（见 download model 步骤）注入。
+    # Local flavor 跟 cloud 同一份代码，差异仅在 tauri.conf.json 是否包含
+    # bundle.resources 的 sherpa-models（local.conf.json patch 加上去）。
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [cloud, local]
     steps:
       - uses: actions/checkout@v4
 
@@ -46,8 +54,32 @@ jobs:
       - name: Frontend build
         run: pnpm build
 
+      # Local flavor 才下 SenseVoice ~165MB tar.bz2 → 解压 ~241MB 到 src-tauri/resources/sherpa-models/
+      - name: Download SenseVoice model (local flavor only)
+        if: matrix.flavor == 'local'
+        shell: bash
+        run: |
+          set -e
+          MODEL_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2"
+          mkdir -p src-tauri/resources/sherpa-models/sense-voice
+          curl -L -o /tmp/sense-voice.tar.bz2 "$MODEL_URL"
+          mkdir -p /tmp/sv-extract
+          tar -xjf /tmp/sense-voice.tar.bz2 -C /tmp/sv-extract
+          mv /tmp/sv-extract/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/model.int8.onnx \
+             src-tauri/resources/sherpa-models/sense-voice/
+          mv /tmp/sv-extract/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/tokens.txt \
+             src-tauri/resources/sherpa-models/sense-voice/
+          ls -la src-tauri/resources/sherpa-models/sense-voice/
+          rm -rf /tmp/sv-extract /tmp/sense-voice.tar.bz2
+
       - name: Tauri build (NSIS .exe)
-        run: pnpm exec tauri build --bundles nsis
+        shell: bash
+        run: |
+          if [[ "${{ matrix.flavor }}" == "local" ]]; then
+            pnpm exec tauri build --bundles nsis --config src-tauri/tauri.local.conf.json
+          else
+            pnpm exec tauri build --bundles nsis
+          fi
         env:
           # Tauri updater 签名 —— 私钥用 minisign 格式存在 GitHub Secrets，
           # 跟 macOS 端 Sparkle EdDSA 一个套路。私钥本机备份在
@@ -62,6 +94,25 @@ jobs:
           New-Item -ItemType Directory -Force -Path release | Out-Null
           $exe = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter "*.exe" -Recurse | Select-Object -First 1
           if (-not $exe) { Write-Error "no .exe produced"; exit 1 }
+          # (v0.14.0 双 SKU) 双 flavor 都重命名到 release.ts 的 canonical 命名：
+          #   cloud → TiTiTalk-windows-<v>-setup.exe
+          #   local → TiTiTalk-Local-windows-<v>-setup.exe
+          # 跟 windows-update.json 里的 url + sync-mirror.sh 的 release tag asset
+          # 一致，避免 URL 跟 asset 名字不匹配导致 updater 404。
+          $version = '${{ github.ref_name }}' -replace '^v',''
+          if ('${{ matrix.flavor }}' -eq 'local') {
+            $canonName = "TiTiTalk-Local-windows-$version-setup.exe"
+          } else {
+            $canonName = "TiTiTalk-windows-$version-setup.exe"
+          }
+          if ($exe.Name -ne $canonName) {
+            Rename-Item -Path $exe.FullName -NewName $canonName
+            $exe = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter $canonName -Recurse | Select-Object -First 1
+          }
+          $sigOld = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter "TiTiTalk_*_x64-setup.exe.sig" -Recurse | Select-Object -First 1
+          if ($sigOld) {
+            Rename-Item -Path $sigOld.FullName -NewName "$canonName.sig"
+          }
           Copy-Item $exe.FullName -Destination release/
           # (fix) PowerShell `${(...)}` 语法错 —— `${}` 只展变量名，不展子表达式。
           # 之前 SHA256SUMS.txt 里 hash 部分是空字符串只剩文件名。
@@ -80,15 +131,28 @@ jobs:
             Copy-Item $sig.FullName -Destination release/
             $sigContent = Get-Content $sig.FullName -Raw
             $version = '${{ github.ref_name }}' -replace '^v',''
-            $serverName = "TiTiTalk-windows-$version-setup.exe"
+            # (v0.14.0 双 SKU) binary 走 GitHub Release direct link（mirror repo
+            # yigenyecao-afk/tititalk-downloads），不再 host 在 tititalk.com。
+            # tititalk.com 只放 metadata（updater feed）兼容老 client URL。
+            $mirrorRepo = "yigenyecao-afk/tititalk-downloads"
+            $ghBase = "https://github.com/$mirrorRepo/releases/download/v$version"
+            if ('${{ matrix.flavor }}' -eq 'local') {
+              $serverName = "TiTiTalk-Local-windows-$version-setup.exe"
+              $serverUrl = "$ghBase/$serverName"
+              $notesText = "TiTiTalk Windows Local v$version"
+            } else {
+              $serverName = "TiTiTalk-windows-$version-setup.exe"
+              $serverUrl = "$ghBase/$serverName"
+              $notesText = "TiTiTalk Windows v$version"
+            }
             $update = @{
               version = $version
-              notes = "TiTiTalk Windows v$version"
+              notes = $notesText
               pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
               platforms = @{
                 "windows-x86_64" = @{
                   signature = $sigContent
-                  url = "https://tititalk.com/downloads/$serverName"
+                  url = $serverUrl
                 }
               }
             }
@@ -99,7 +163,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tititalk-windows-installer
+          name: tititalk-windows-installer-${{ matrix.flavor }}
           path: |
             release/*.exe
             release/*.exe.sig

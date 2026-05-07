@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "_comment": "(v0.14.0 M1 双 SKU) Local SKU 专用 patch — `tauri build --config src-tauri/tauri.local.conf.json` 时跟 tauri.conf.json 合并，把 sherpa-models bundle 进 installer。Cloud SKU 走默认 tauri.conf.json 不含 model。",
+  "bundle": {
+    "resources": {
+      "resources/sherpa-models/sense-voice/model.int8.onnx": "sherpa-models/sense-voice/model.int8.onnx",
+      "resources/sherpa-models/sense-voice/tokens.txt": "sherpa-models/sense-voice/tokens.txt"
+    }
+  }
+}

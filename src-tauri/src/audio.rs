@@ -263,8 +263,19 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
     let raw = match raw_result {
         Ok(t) => t,
         Err(e) => {
+            // (v0.14.0 双 SKU) 本地引擎失败时不自动 fallback —— Local SKU 用户
+            // 买 Local 版就是要本地，强切云端违反预期。给友好错误 + 重试建议。
+            // Cloud SKU local engine 在 preflight 已经被拦截走不到这里。
+            let err_msg = if cfg.engine == "local" {
+                format!(
+                    "本地引擎转写失败：{}。请重试一次；如果反复失败可在「设置 → 引擎」切到 TiTiTalk 云端。",
+                    e
+                )
+            } else {
+                e.to_string()
+            };
             state.set_phase(PipelinePhase::Failed);
-            state.emit(PipelineEvent::Error { message: e.to_string() });
+            state.emit(PipelineEvent::Error { message: err_msg });
             return;
         }
     };
@@ -277,6 +288,25 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
         log::info!("[short-transcript-guard] dropping {} chars", trimmed_raw.chars().count());
         state.set_phase(PipelinePhase::Done);
         return;
+    }
+
+    // (v0.14.0 M3 伪 partial 流) Local 引擎一次性出全文，Cloud 流式逐字。
+    // 为体验对齐：local 路径把 raw 切 5 段，每 50ms emit Partial 让 pill 动画追字。
+    // SenseVoice 不支持真流式，这是补救方案 — 用户感知「字一段段冒出来」而不是
+    // 「啪一下全显」。Cloud 路径已经是真流式不走这里。
+    if cfg.engine == "local" {
+        let chars: Vec<char> = trimmed_raw.chars().collect();
+        let seg_count = chars.len().min(5).max(1);
+        let step_size = (chars.len() / seg_count).max(1);
+        let mut emitted = 0usize;
+        for _ in 0..seg_count {
+            emitted = (emitted + step_size).min(chars.len());
+            let slice: String = chars[..emitted].iter().collect();
+            state.emit(PipelineEvent::Partial { text: slice });
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        // 清空 partial — 接下来的 transcript / polish 接管显示
+        state.emit(PipelineEvent::Partial { text: String::new() });
     }
 
     // Stylist post-processing — opt-in. Failure falls back to raw with a warning,
