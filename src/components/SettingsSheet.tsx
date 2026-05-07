@@ -990,6 +990,7 @@ const DOUBLE_MOD_KEYS = new Set(["", "shift", "cmd", "opt", "ctrl"]);
 const MOUSE_SIDE_BTNS = new Set([0, 1, 2]);
 const PET_SLUGS = new Set(["boba", "byte-bunny", "mochi-cat", "buddy-corgi", "panda-baba"]);
 const CHATTINESS_VALUES = new Set([0, 1, 2, 3]);
+const LANGUAGES = new Set(["auto", "zh", "en", "yue", "yue_zh"]);
 
 function normalizeConfigValues(cfg: AppConfig): AppConfig {
   return {
@@ -1007,6 +1008,7 @@ function normalizeConfigValues(cfg: AppConfig): AppConfig {
     companion_chattiness: CHATTINESS_VALUES.has(cfg.companion_chattiness)
       ? cfg.companion_chattiness
       : 2,
+    language: LANGUAGES.has(cfg.language) ? cfg.language : "auto",
   };
 }
 
