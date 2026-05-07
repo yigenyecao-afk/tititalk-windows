@@ -7,7 +7,7 @@ mod asr_stream;
 mod assistant;
 mod audio;
 mod batch_transcribe;
-mod companion;
+// (v0.13.4 返璞归真) companion mod 砍 — 整套桌面宠物下线
 mod config;
 mod history;
 mod hotkey;
@@ -178,12 +178,7 @@ pub fn run() {
             batch_transcribe::cmd_transcribe_file,
             rewrite_selection::cmd_get_clipboard_text,
             rewrite_selection::cmd_rewrite_selection_start,
-            // Wave 4 — 桌面宠物窗口
-            companion::cmd_companion_show,
-            companion::cmd_companion_hide,
-            companion::cmd_companion_set_position,
-            companion::cmd_companion_get_position,
-            companion::cmd_companion_save_share_card,
+            // (v0.13.4 返璞归真) Wave 4 桌面宠物 commands 砍
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -212,12 +207,8 @@ pub fn run() {
             if let Some(pill) = app.get_webview_window("pill") {
                 let _ = pill.hide();
             }
-            // Wave 4 — companion 默认 hidden，前端按 cfg.companion.enabled 决定
-            // 是否调 cmd_companion_show；这样就算用户未开启宠物，进程也不耗
-            // 渲染。前端冷启动时读 cfg 一次再调 show。
-            if let Some(comp) = app.get_webview_window("companion") {
-                let _ = comp.hide();
-            }
+            // (v0.13.4 返璞归真) Wave 4 桌面宠物 webview 砍 — tauri.conf.json
+            // 已移除 companion window 定义
 
             // Show main window on first launch + every cold start. The window
             // is `visible:false` in tauri.conf.json so it doesn't flash before

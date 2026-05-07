@@ -16,7 +16,7 @@ export default defineConfig({
         main: "index.html",
         pill: "pill.html",
         assistant: "assistant.html",
-        companion: "companion.html",
+        // (v0.13.4) companion 整套砍
       },
     },
   },

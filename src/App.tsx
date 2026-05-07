@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { emitTo, listen } from "@tauri-apps/api/event";
+// (v0.13.4) emitTo/listen 不再用 — companion event 砍后没消费方
 import {
   checkMicrophone,
   clearHistory,
@@ -26,6 +26,7 @@ import ConflictDialog from "./components/ConflictDialog";
 import SettingsSheet from "./components/SettingsSheet";
 import AccountSheet from "./components/AccountSheet";
 import OnboardingRoleSheet from "./components/OnboardingRoleSheet";
+import Onboarding from "./components/Onboarding";
 // P0 wave 3 components
 import { PersonalizationCard } from "./components/PersonalizationCard";
 import { CrossSearchSheet } from "./components/CrossSearchSheet";
@@ -143,71 +144,9 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [cheatsheetOpen]);
 
-  // Wave 4 — companion 冷启动 + quota fan-out
-  useEffect(() => {
-    if (!cfg) return;
-    let cancelled = false;
-    let timer: number | null = null;
-    let lastChars = 0;
-
-    (async () => {
-      // 冷启动：cfg.companion_enabled = true → 显示宠物窗口 + 推一次 cfg
-      if (cfg.companion_enabled) {
-        try {
-          await invoke("cmd_companion_show");
-          await emitTo("companion", "companion-config", { cfg });
-        } catch (e) {
-          console.warn("[companion] cold-start show failed:", e);
-        }
-      }
-
-      // 周期 60s 拉一次 daily_summary 喂宠物（仅登录态）。失败不抛。
-      const pump = async () => {
-        if (cancelled || !cfg.companion_enabled) return;
-        try {
-          const { getDailySummary } = await import("./lib/wave3-api");
-          const sum = await getDailySummary();
-          // localStorage 记 30 天最大字数 record；当日字数 > record 时也写回
-          const recKey = "companion:dayCharsRecord";
-          const stored = Number(window.localStorage.getItem(recKey) ?? "0");
-          const record = Math.max(stored, sum.chars);
-          if (sum.chars > stored) window.localStorage.setItem(recKey, String(record));
-          if (sum.chars !== lastChars) lastChars = sum.chars;
-          await emitTo("companion", "companion-quota", {
-            percent: sum.quota_used_pct,
-            day_chars: sum.chars,
-            day_chars_record: record,
-          });
-        } catch {
-          // 未登录 / 网络错误：safely 忽略；下次再试
-        }
-      };
-      pump();
-      timer = window.setInterval(pump, 60_000);
-    })();
-
-    return () => {
-      cancelled = true;
-      if (timer != null) window.clearInterval(timer);
-    };
-  }, [cfg?.companion_enabled, cfg?.companion_pet_slug, cfg?.companion_chattiness]);
-
-  // Wave 4 Stage 2 — 监听 companion 「走开」事件 → 把 cfg.companion_enabled 写回 false
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    listen("companion-go-away", async () => {
-      if (!cfg) return;
-      const next = { ...cfg, companion_enabled: false };
-      try {
-        await saveConfig(next);
-        setCfg(next);
-        await invoke("cmd_companion_hide");
-      } catch (e) {
-        console.warn("[companion] go-away handle failed:", e);
-      }
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
-  }, [cfg]);
+  // (v0.13.4 返璞归真) Wave 4 桌面宠物整套砍 — 用户反馈「同样垃圾体验」。
+  // companion 冷启动 + quota fan-out + go-away 全删；cfg.companion_* 字段保留兼容
+  // 老 cfg.json 但不再触发任何 webview 显示 / fan-out。
 
   useEffect(() => {
     getConfig().then(setCfg).catch((e) => console.error(e));
@@ -348,8 +287,19 @@ export default function App() {
     );
   }
 
+  // (v0.13.4) Onboarding 30 秒 magical moment —— 首次启动 / 老用户升级第一次
+  // 进入此版本时蒙层全屏。完成后写 cfg.onboarding_completed=true 持久化。
+  const showOnboarding = cfg && !cfg.onboarding_completed;
+  const hotkeyLabel = useMemo(() => {
+    if (!cfg) return "F1";
+    return VK_CHOICES.find((c) => c.vk === cfg.hotkey_vk)?.label ?? "F1";
+  }, [cfg]);
+
   return (
     <div className="min-h-screen flex flex-col">
+      {showOnboarding && cfg && (
+        <Onboarding cfg={cfg} onConfigUpdate={setCfg} hotkeyLabel={hotkeyLabel} />
+      )}
       <UpdateBanner status={update} setStatus={setUpdate} />
       {upgrade && <UpgradeBanner reason={upgrade} onDismiss={() => setUpgrade(null)} />}
       {/* P0 wave 3 #12 — 会议探针顶部 banner */}
@@ -551,12 +501,7 @@ export default function App() {
               onSave={async (next) => {
                 await saveConfig(next);
                 setCfg(next);
-                try {
-                  if (cfg && cfg.companion_enabled !== next.companion_enabled) {
-                    await invoke(next.companion_enabled ? "cmd_companion_show" : "cmd_companion_hide");
-                  }
-                  await emitTo("companion", "companion-config", { cfg: next });
-                } catch (e) { console.warn("companion sync:", e); }
+                // (v0.13.4) Companion sync 砍 — 整套桌面宠物已下线
               }}
             />
           </div>

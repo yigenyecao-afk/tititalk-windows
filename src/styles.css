@@ -246,3 +246,185 @@ html.force-dark .pill-mono {
   color: #f1f5f9;
   border-color: rgba(255, 255, 255, 0.08);
 }
+
+/* (v0.13.4 design tokens) MinimalPill 样式 —— 跟 Mac MinimalPill.swift 1:1 同源。
+ * Mac 源：
+ *   pillSize  = 180 × 48
+ *   bgColor   = #1f1f21 (RGB 0.12/0.12/0.13)
+ *   errorColor = #f56633 (RGB 0.96/0.40/0.20)
+ *   HStack spacing = 6（✕ 跟波形之间），bars spacing = 3
+ *   ✕ button = 32 × 32 圆，white 18% 填充，icon 11px semibold
+ *   bar = 2px × (4 baseline … 26 max)
+ *   BAR_COUNT = 16
+ *   breath  = 0.85s easeInOut alternate
+ *   ✕ transition = 0.22s easeInOut
+ */
+.pill-minimal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 180px;
+  height: 48px;
+  padding: 0 12px;
+  background: #1f1f21;
+  border-radius: 24px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  -webkit-app-region: drag;
+  transition: gap 0.22s ease-in-out;
+}
+.pill-minimal-btn {
+  -webkit-app-region: no-drag;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.22s ease-in-out, transform 0.22s ease-in-out;
+}
+.pill-minimal-cancel {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+.pill-minimal-cancel:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+.pill-minimal-bars {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 100%;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.18s ease-in-out;
+}
+.pill-minimal-bar {
+  width: 2px;
+  background: #fff;
+  border-radius: 1px;
+  transition: height 0.12s ease-out;
+}
+.pill-minimal-bars-breath {
+  animation: pillMinimalBreath 0.85s ease-in-out infinite alternate;
+}
+.pill-minimal-bars-error .pill-minimal-bar {
+  background: #f56633;
+}
+@keyframes pillMinimalBreath {
+  from { opacity: 0.50; }
+  to   { opacity: 0.85; }
+}
+
+/* (v0.13.4) Onboarding 30 秒 magical moment 全屏蒙层 */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: stretch;
+  animation: onboardingFadeIn 0.6s ease-out forwards;
+  user-select: none;
+  cursor: default;
+}
+.onboarding-closing {
+  animation: onboardingFadeOut 0.45s ease-in forwards;
+}
+@keyframes onboardingFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes onboardingFadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.onboarding-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 60px 80px;
+}
+.onboarding-center {
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.onboarding-pulse {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 28px rgba(255, 255, 255, 0.55);
+  transition: transform 1.2s ease-in-out, opacity 1.2s ease-in-out;
+  animation: onboardingPulse 2.4s ease-in-out infinite;
+}
+@keyframes onboardingPulse {
+  0%, 100% { transform: scale(1.0); opacity: 0.45; }
+  50%      { transform: scale(1.6); opacity: 0.85; }
+}
+.onboarding-bars {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  height: 60px;
+}
+.onboarding-bar {
+  width: 3px;
+  background: #fff;
+  border-radius: 1.5px;
+  transition: height 0.12s ease-out;
+}
+.onboarding-reveal {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 32px;
+  font-weight: 300;
+  color: #fff;
+  text-align: center;
+  max-width: 800px;
+  line-height: 1.4;
+  animation: onboardingFadeIn 0.5s ease-out forwards;
+}
+.onboarding-instruction {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 60px;
+}
+.onboarding-headline {
+  font-size: 22px;
+  font-weight: 500;
+  color: #fff;
+  transition: opacity 0.6s ease-out;
+}
+.onboarding-subtitle {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.55);
+  transition: opacity 0.6s ease-out;
+}
+.onboarding-listening {
+  font-size: 16px;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.7);
+}
+.onboarding-greeting {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 18px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+}
+.onboarding-skip {
+  text-align: center;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.25);
+  padding-bottom: 24px;
+}

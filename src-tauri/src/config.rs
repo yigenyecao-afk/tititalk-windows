@@ -144,6 +144,11 @@ pub struct AppConfig {
     /// stylist 都拿不到前台 exe 名（仅影响场景化提示，不阻断主流程）。
     #[serde(default = "yes")]
     pub telemetry_app_context_enabled: bool,
+    /// (v0.13.4 Onboarding) 首次启动 30 秒 magical moment 是否走完。false 时
+    /// App.tsx 渲染 <Onboarding /> 全屏蒙层；用户做完一次完整录音自动置 true。
+    /// 默认 false（首次安装 + 老用户升级都看一次）。
+    #[serde(default = "no")]
+    pub onboarding_completed: bool,
 }
 
 fn default_engine() -> String { "tititalk_cloud".into() }
@@ -224,6 +229,7 @@ impl Default for AppConfig {
             companion_chattiness: default_companion_chattiness(),
             pill_enabled: false,
             telemetry_app_context_enabled: true,
+            onboarding_completed: false,
         }
     }
 }

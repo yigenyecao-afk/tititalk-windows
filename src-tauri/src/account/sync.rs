@@ -20,9 +20,24 @@
 //!   • `default_language` ↔ `language`
 //!   • `default_stylist`  ↔ `stylist_persona`
 //!   • `default_persona`  — none yet
-//!   • `ui_preferences`   ↔ {auto_insert, also_copy, hotkey_vk, min_hold_ms,
-//!                            stylist_enabled, stylist_model}
+//!   • `ui_preferences`   ↔ {hotkey_mode}
 //!   • `version_schema`   ↔ literal 1
+//!
+//! (v0.13.4 sync 瘦身) ui_preferences 从 14 个 key 砍到 1 — 跟 Mac 端 v2.13.8
+//! 同源策略：device-local prefs（auto_insert / also_copy / sound_* / history_* /
+//! pill_enabled / telemetry / stylist_enabled / hybrid threshold 等）每端各自管
+//! 本地默认即可，不跨设备同步。只留 hotkey_mode（用户切 push_to_talk vs
+//! toggle vs hybrid 的偏好通常想跟随）。Win 没有 silence_auto_stop_seconds 这
+//! 个字段，所以比 Mac 少 1 个。
+//!
+//! 砍掉的字段（cloud 上仍可能有 mac 的 floating_pill_enabled 等，由 overlay
+//! 路径原样保留 echo back，不会擦云端记录）：
+//!   • auto_insert / also_copy / hotkey_vk / min_hold_ms
+//!   • stylist_enabled / stylist_model
+//!   • hybrid_press_threshold_ms
+//!   • sound_feedback_enabled / sound_feedback_volume
+//!   • history_retention_days / history_cleanup_enabled
+//!   • floating_pill_enabled / telemetry_app_context_enabled
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -151,7 +166,8 @@ impl CloudConfigSync {
             Ok(c) => c,
             Err(e) => {
                 log::info!("CloudConfigSync.bootstrap_reconcile GET failed: {e}");
-                self.report_sync_error("配置同步：拉取失败，下次改设置时会自动重试。", &e);
+                // (v0.13.4 文案重写) 不复述 "配置同步" / "拉取失败" 等内部状态。
+                self.report_sync_error("这次没拿到设置，等会儿自动再试。", &e);
                 return;
             }
         };
@@ -282,14 +298,16 @@ impl CloudConfigSync {
                     Box::pin(self.bootstrap_reconcile()).await;
                 } else if e.status() == Some(413) {
                     log::warn!("CloudConfigSync.put: config exceeds 100KB — dropped");
+                    // (v0.13.4 文案重写) 不暴露 "100KB" / "云端" 等内部状态。
                     self.report_sync_error(
-                        "云端同步：配置超过 100KB（可能是词典过大），暂未同步。",
+                        "词典或 persona 太长了。再精简一点就能同步。",
                         &e,
                     );
                 } else {
                     log::info!("CloudConfigSync.put failed: {e}");
+                    // (v0.13.4 文案重写) 不道歉式，告诉用户「能不能继续」即可。
                     self.report_sync_error(
-                        "云端同步暂时失败，下次改设置时会自动重试。",
+                        "这次设置没传上去，等会儿自动重试。",
                         &e,
                     );
                 }
@@ -438,25 +456,11 @@ pub fn snapshot_from_config_with_overlay(
     m.insert("default_engine".into(), json!(cfg.engine));
     m.insert("default_language".into(), json!(cfg.language));
     m.insert("default_stylist".into(), json!(cfg.stylist_persona));
-    // 本端已知的所有 ui_preferences 子 key 列表 —— 必须显式列全，否则
-    // overlay 时会把这一端「最近本地清空」的字段误判成「未知字段」保留
-    // 云端旧值。新增一个 ui 字段时这里也要加一行。
+    // (v0.13.4 sync 瘦身) 只剩 hotkey_mode —— 其它 device-local prefs 不跨端。
+    // 显式列出本端已知的同步字段；overlay 时未列出的 cloud 字段（如 mac 的
+    // floating_pill_enabled）原样保留 echo back，不被擦掉。
     let local_ui_keys: &[(&str, Value)] = &[
-        ("auto_insert",               json!(cfg.auto_insert)),
-        ("also_copy",                 json!(cfg.also_copy)),
-        ("hotkey_vk",                 json!(cfg.hotkey_vk)),
-        ("min_hold_ms",               json!(cfg.min_hold_ms)),
-        ("stylist_enabled",           json!(cfg.stylist_enabled)),
-        ("stylist_model",             json!(cfg.stylist_model)),
-        ("hotkey_mode",               json!(cfg.hotkey_mode)),
-        ("hybrid_press_threshold_ms", json!(cfg.hybrid_press_threshold_ms)),
-        ("sound_feedback_enabled",    json!(cfg.sound_feedback_enabled)),
-        ("sound_feedback_volume",     json!(cfg.sound_feedback_volume)),
-        ("history_retention_days",    json!(cfg.history_retention_days)),
-        ("history_cleanup_enabled",   json!(cfg.history_cleanup_enabled)),
-        // P1 跨平台对齐 2026-05-06：跟 Mac 端 floating_pill_enabled 同 key
-        ("floating_pill_enabled",     json!(cfg.pill_enabled)),
-        ("telemetry_app_context_enabled", json!(cfg.telemetry_app_context_enabled)),
+        ("hotkey_mode", json!(cfg.hotkey_mode)),
     ];
     let mut ui_map: Map<String, Value> = match cloud_ui {
         Some(cu) => cu.clone(), // 保留云端所有字段（含 mac 独有的）
@@ -496,53 +500,14 @@ pub fn apply_cloud_to_config(cloud: &Map<String, Value>, cfg: &mut AppConfig) {
         cfg.stylist_persona = s.to_string();
     }
     if let Some(ui) = cloud.get("ui_preferences").and_then(|v| v.as_object()) {
-        if let Some(b) = ui.get("auto_insert").and_then(|v| v.as_bool()) {
-            cfg.auto_insert = b;
-        }
-        if let Some(b) = ui.get("also_copy").and_then(|v| v.as_bool()) {
-            cfg.also_copy = b;
-        }
-        if let Some(n) = ui.get("hotkey_vk").and_then(|v| v.as_u64()) {
-            cfg.hotkey_vk = n as u32;
-        }
-        if let Some(n) = ui.get("min_hold_ms").and_then(|v| v.as_u64()) {
-            cfg.min_hold_ms = n as u32;
-        }
-        if let Some(b) = ui.get("stylist_enabled").and_then(|v| v.as_bool()) {
-            cfg.stylist_enabled = b;
-        }
-        if let Some(s) = ui.get("stylist_model").and_then(|v| v.as_str()) {
-            cfg.stylist_model = s.to_string();
-        }
-        // ↓ v0.6 新增字段，老条目可能没有 → 维持本地默认。
+        // (v0.13.4 sync 瘦身) 只读 hotkey_mode —— 其它 device-local prefs 由
+        // 各端本地管，cloud 字段保留 echo（snapshot overlay 不动它们）但不写入
+        // 本端 AppConfig，避免「Mac 改 floating_pill_enabled 反过来覆盖 Win」。
         if let Some(s) = ui.get("hotkey_mode").and_then(|v| v.as_str()) {
-            // 防御：只接受三个已知值，未知值 fallback push_to_talk
             cfg.hotkey_mode = match s {
                 "toggle" | "hybrid" | "push_to_talk" => s.to_string(),
                 _ => "push_to_talk".to_string(),
             };
-        }
-        if let Some(n) = ui.get("hybrid_press_threshold_ms").and_then(|v| v.as_u64()) {
-            cfg.hybrid_press_threshold_ms = n as u32;
-        }
-        if let Some(b) = ui.get("sound_feedback_enabled").and_then(|v| v.as_bool()) {
-            cfg.sound_feedback_enabled = b;
-        }
-        if let Some(f) = ui.get("sound_feedback_volume").and_then(|v| v.as_f64()) {
-            cfg.sound_feedback_volume = f.clamp(0.0, 1.0) as f32;
-        }
-        if let Some(n) = ui.get("history_retention_days").and_then(|v| v.as_u64()) {
-            cfg.history_retention_days = n as u32;
-        }
-        if let Some(b) = ui.get("history_cleanup_enabled").and_then(|v| v.as_bool()) {
-            cfg.history_cleanup_enabled = b;
-        }
-        // P1 跨平台对齐 2026-05-06：跟 snapshot 端一一对应
-        if let Some(b) = ui.get("floating_pill_enabled").and_then(|v| v.as_bool()) {
-            cfg.pill_enabled = b;
-        }
-        if let Some(b) = ui.get("telemetry_app_context_enabled").and_then(|v| v.as_bool()) {
-            cfg.telemetry_app_context_enabled = b;
         }
     }
 }

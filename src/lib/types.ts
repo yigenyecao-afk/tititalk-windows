@@ -61,12 +61,18 @@ export interface AppConfig {
   pill_enabled: boolean;
   /// (P2-30 隐私) 前台 app 上下文遥测 opt-out。默认 ON 跟旧行为兼容。
   telemetry_app_context_enabled: boolean;
+  /// (v0.13.4 Onboarding) 首次启动 30 秒 magical moment 是否走完。false 时
+  /// App.tsx 渲染 <Onboarding /> 全屏蒙层；用户做完一次完整录音自动置 true。
+  onboarding_completed: boolean;
 }
 
 /// (v0.13.0) 4 主题对齐 Mac 老 4 主题；老 Editorial key（lantern/annotation/
 /// telegraph/seal）由 SettingsSheet 启动时 normalize + cloud sync 入站迁移
 /// 自动转新 key 不再出现在新 type 里。
-export type PillTheme = "typeless" | "titi" | "aurora" | "mono";
+/// (v0.13.4 返璞归真) 永远只有 "minimal" — 砍 4 主题（typeless/titi/aurora/mono）。
+/// 字段保留兼容老 cfg.json + 云端 sync 入站的旧值（PillApp.migrateLegacyPillTheme
+/// 会把旧值统一映射回 "minimal"）。
+export type PillTheme = "minimal";
 
 export type PolishIntensity = "light" | "normal" | "heavy";
 
