@@ -213,7 +213,7 @@ impl Default for AppConfig {
             polish_intensity: default_polish_intensity(),
             double_modifier_key: default_double_modifier_key(),
             mouse_side_button: default_mouse_side_button(),
-            hotword_suggestion_enabled: false,
+            hotword_suggestion_enabled: true,  // (v0.13.2) 默认 ON — 跟 Mac 同源；toggle 已砍
             translate_hotkey_enabled: true,
             translation_target: default_translation_target(),
             assistant_hotkey_enabled: true,

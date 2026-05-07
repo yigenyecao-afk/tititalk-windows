@@ -48,11 +48,11 @@ import {
 /// 账户/设置/帮助沉到侧栏底部 toolbar 弹 sheet。
 /// (P1-10 跨端对齐 2026-05-06) 加 dictionary 跟 Mac 对齐——之前沉到设置高级
 /// 三层深，词典编辑频次很高直接顶级 tab。
-type Tab = "home" | "history" | "dictionary";
+type Tab = "home" | "history" | "dictionary" | "settings";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("home");
-  const [showSettings, setShowSettings] = useState(false);
+  // (v0.13.2) showSettings state 砍 — 设置改 inline tab="settings" 渲染
   const [showAccount, setShowAccount] = useState(false);
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [recent, setRecent] = useState<{ at: string; text: string }[]>([]);
@@ -414,6 +414,8 @@ export default function App() {
           <NavBtn active={tab === "history"} onClick={() => setTab("history")}>历史记录</NavBtn>
           {/* (P1-10 2026-05-06) 词典 tab——跟 Mac 对齐，频次高的入口直接顶级 */}
           <NavBtn active={tab === "dictionary"} onClick={() => setTab("dictionary")}>词典</NavBtn>
+          {/* (v0.13.2) 设置 tab — 砍 sheet 模态改 inline，最后一项 */}
+          <NavBtn active={tab === "settings"} onClick={() => setTab("settings")}>设置</NavBtn>
         </nav>
 
         {/* 状态指示器 */}
@@ -434,17 +436,12 @@ export default function App() {
           </div>
         </div>
 
-        {/* 底部 icon-only toolbar：账户 / 设置 / 帮助 — 跟 Mac TypelessSettingsSheet 入口对齐 */}
+        {/* (v0.13.2) 底部 toolbar 砍设置 icon — 设置已经在 nav 最后一项；只保留账户/帮助 */}
         <div className="px-3 py-2.5 border-t border-ink-200 bg-ink-50/60 flex items-center gap-3">
           <SidebarIconBtn
             icon="👤"
             tooltip="账户与计费"
             onClick={() => setShowAccount(true)}
-          />
-          <SidebarIconBtn
-            icon="⚙"
-            tooltip="设置"
-            onClick={() => setShowSettings(true)}
           />
           <SidebarIconBtn
             icon="?"
@@ -463,7 +460,7 @@ export default function App() {
               phase={phase}
               lastError={lastError}
               recent={recent}
-              onGoSettings={() => setShowSettings(true)}
+              onGoSettings={() => setTab("settings")}
               onGoAccount={() => setShowAccount(true)}
               onGoHistory={() => setTab("history")}
               onDismissError={() => setLastError("")}
@@ -511,76 +508,66 @@ export default function App() {
             />
           </div>
         )}
+        {tab === "settings" && cfg && (
+          <div className="p-8">
+            <SettingsSheet
+              open={true}
+              inline={true}
+              cfg={cfg}
+              proUnlocked={proUnlocked}
+              onClose={() => {}}
+              appearance={appearance}
+              onAppearanceChange={setAppearance}
+              onResetDefaults={async () => {
+                try {
+                  const fresh = await invoke<AppConfig>("cmd_reset_default_config");
+                  setCfg(fresh);
+                  setNotice("已重置为默认设置");
+                  window.setTimeout(() => setNotice(""), 3000);
+                } catch (e) {
+                  alert("重置失败：" + String(e));
+                }
+              }}
+              onDeleteAccount={() => {
+                window.open("https://tititalk.com/dashboard/account/delete", "_blank");
+              }}
+              onOpenLogFolder={async () => {
+                try { await invoke("cmd_open_log_folder"); }
+                catch (e) { alert("打开失败：" + String(e)); }
+              }}
+              onOpenDiagnostics={async () => {
+                const lines: string[] = [];
+                try {
+                  const r = await checkMicrophone();
+                  lines.push(`麦克风：${r.ok ? "✅ OK" : "❌ " + r.reason}`);
+                } catch (e) { lines.push("麦克风：⚠️ " + String(e)); }
+                try {
+                  const { testAsr } = await import("./lib/api");
+                  const r = await testAsr();
+                  lines.push(`ASR：${r}`);
+                } catch (e) { lines.push("ASR：⚠️ " + String(e)); }
+                alert("一键诊断结果：\n\n" + lines.join("\n"));
+              }}
+              onSave={async (next) => {
+                await saveConfig(next);
+                setCfg(next);
+                try {
+                  if (cfg && cfg.companion_enabled !== next.companion_enabled) {
+                    await invoke(next.companion_enabled ? "cmd_companion_show" : "cmd_companion_hide");
+                  }
+                  await emitTo("companion", "companion-config", { cfg: next });
+                } catch (e) { console.warn("companion sync:", e); }
+              }}
+            />
+          </div>
+        )}
       </main>
       {cheatsheetOpen && (
         <HotkeyCheatsheetOverlay onClose={() => setCheatsheetOpen(false)} cfg={cfg} />
       )}
       </div>
 
-      {/* Sheets — 跟 Mac TypelessSettingsSheet / AccountSettingsView 一一对应 */}
-      <SettingsSheet
-        open={showSettings}
-        cfg={cfg!}
-        proUnlocked={proUnlocked}
-        onClose={() => setShowSettings(false)}
-        appearance={appearance}
-        onAppearanceChange={setAppearance}
-        onResetDefaults={async () => {
-          try {
-            const fresh = await invoke<AppConfig>("cmd_reset_default_config");
-            setCfg(fresh);
-            setNotice("已重置为默认设置");
-            window.setTimeout(() => setNotice(""), 3000);
-          } catch (e) {
-            console.error("reset defaults:", e);
-            alert("重置失败：" + String(e));
-          }
-        }}
-        onDeleteAccount={() => {
-          // 跳转到 web dashboard 的删除账户流（合规起见走 web 二次确认）
-          window.open("https://tititalk.com/dashboard/account/delete", "_blank");
-        }}
-        onOpenLogFolder={async () => {
-          try {
-            await invoke("cmd_open_log_folder");
-          } catch (e) {
-            console.error("open log:", e);
-            alert("打开失败：" + String(e));
-          }
-        }}
-        onOpenDiagnostics={async () => {
-          // 简单跑一次：mic 权限 + ASR test
-          const lines: string[] = [];
-          try {
-            const r = await checkMicrophone();
-            lines.push(`麦克风：${r.ok ? "✅ OK" : "❌ " + r.reason}`);
-          } catch (e) { lines.push("麦克风：⚠️ " + String(e)); }
-          try {
-            const { testAsr } = await import("./lib/api");
-            const r = await testAsr();
-            lines.push(`ASR：${r}`);
-          } catch (e) { lines.push("ASR：⚠️ " + String(e)); }
-          alert("一键诊断结果：\n\n" + lines.join("\n"));
-        }}
-        onSave={async (next) => {
-          await saveConfig(next);
-          setCfg(next);
-          // Wave 4 — companion 同步
-          // 1. 切换 enabled 开关 → show/hide companion 窗口
-          // 2. 任何 cfg 改 → emit companion-config，让 companion webview 自适应
-          //    （pet slug / 话痨度 / persona）
-          try {
-            if (cfg && cfg.companion_enabled !== next.companion_enabled) {
-              await invoke(
-                next.companion_enabled ? "cmd_companion_show" : "cmd_companion_hide",
-              );
-            }
-            await emitTo("companion", "companion-config", { cfg: next });
-          } catch (e) {
-            console.warn("[companion] config sync failed:", e);
-          }
-        }}
-      />
+      {/* (v0.13.2) SettingsSheet 顶层模态砍 — 改 inline 渲染在 main 里 tab="settings" */}
       <AccountSheet
         open={showAccount}
         onClose={() => setShowAccount(false)}

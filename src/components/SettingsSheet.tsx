@@ -35,6 +35,7 @@ const CHATTINESS_LABELS: Record<number, string> = {
 /// 选项塞高级 disclosure 默认收起。
 export default function SettingsSheet({
   open,
+  inline = false,
   cfg,
   proUnlocked,
   onClose,
@@ -47,6 +48,9 @@ export default function SettingsSheet({
   onOpenDiagnostics,
 }: {
   open: boolean;
+  /// (v0.13.2) inline=true 时不包 TypelessSheet 模态，直接作为 tab content 渲染。
+  /// 跟 Mac MainWindow detail 案 .settings 同源 — 主界面左侧导航最后一项。
+  inline?: boolean;
   cfg: AppConfig;
   proUnlocked: boolean;
   onClose: () => void;
@@ -139,8 +143,8 @@ export default function SettingsSheet({
     }
   }
 
-  return (
-    <TypelessSheet open={open} title="设置" onClose={onClose}>
+  // (v0.13.2) inline=true → 不包 TypelessSheet，直接 div 让 main 容器决定 padding
+  const content = (
       <div className="space-y-6">
         {/* (v0.12.0) IME 澄清横幅 — 用户经常问"为什么没在系统输入法列表" */}
         <div className="text-xs text-ink-500 bg-ink-50 border border-ink-200 rounded px-3 py-2">
@@ -258,30 +262,8 @@ export default function SettingsSheet({
                 </select>
               }
             />
-            {/* (v0.8.4 P2-2) 双修饰键 hotkey —— 默认关 */}
-            <TypelessRow
-              iconNode={<Icon name="modifier" />}
-              iconColor="#6366F1"
-              title="双击修饰键触发"
-              subtitle={
-                draft.double_modifier_key === ""
-                  ? "300ms 内连按两次同一个修饰键开始/停止录音"
-                  : `已开 · 双击 ${doubleModifierLabel(draft.double_modifier_key)}`
-              }
-              trailing={
-                <select
-                  className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
-                  value={draft.double_modifier_key}
-                  onChange={(e) => patch("double_modifier_key", e.target.value)}
-                >
-                  <option value="">关</option>
-                  <option value="shift">⇧⇧</option>
-                  <option value="ctrl">⌃⌃</option>
-                  <option value="opt">⌥⌥（Alt）</option>
-                  <option value="cmd">⊞⊞（Win 键）</option>
-                </select>
-              }
-            />
+            {/* (v0.13.2) 双击修饰键砍 — 4 路触发选择疲劳，主热键 + 触发方式 +
+                鼠标侧键 3 种已经够用。double_modifier_key 字段保留兼容。 */}
             {/* (v0.8.4 P2-1) 鼠标侧键 hotkey —— 默认关 */}
             <TypelessRow
               iconNode={<Icon name="mouse" />}
@@ -354,47 +336,36 @@ export default function SettingsSheet({
         <section>
           <TypelessSectionHeader title="整理风格" subtitle="AI 把口语整理成什么样" />
           <TypelessCard>
-            <TypelessRow
-              iconNode={<Icon name="sparkle" />}
-              iconColor="#8B5CF6"
-              title="开启自动整理"
-              subtitle="识别完再让 AI 调通顺；失败自动用原文"
-              trailing={
-                <Switch
-                  checked={draft.stylist_enabled}
-                  onChange={(v) => patch("stylist_enabled", v)}
-                />
-              }
-            />
+            {/* (v0.13.2) 开启自动整理 toggle 砍 — 合并到风格 picker「不整理」选项。
+                stylist_enabled=false 视作「不整理」；选其它 persona 自动开启。 */}
             <TypelessRow
               iconNode={<Icon name="palette" />}
               iconColor="#EC4899"
               title="风格"
-              subtitle="也可以说「正式一点」「邮件腔」临时切换"
+              subtitle="也可以说「正式一点」「邮件腔」临时切换；选「不整理」直接插入原文"
               trailing={
                 <select
-                  className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white disabled:opacity-50"
-                  value={draft.stylist_persona}
-                  onChange={(e) =>
-                    patch(
-                      "stylist_persona",
-                      e.target.value as AppConfig["stylist_persona"],
-                    )
-                  }
-                  disabled={!draft.stylist_enabled}
+                  className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+                  value={draft.stylist_enabled ? draft.stylist_persona : "none"}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "none") {
+                      patch("stylist_enabled", false);
+                    } else {
+                      // 一次写两键：开 stylist + 设 persona
+                      const next = { ...draft, stylist_enabled: true, stylist_persona: v as AppConfig["stylist_persona"] };
+                      setDraft(next);
+                    }
+                  }}
                 >
+                  <option value="none">不整理 · 直接插入原文</option>
                   <option value="friendly">友好口语</option>
                   <option value="formal">正式书面</option>
                   <option value="mixed_zh_en">中英混排</option>
-                  {/* FIX-20 (qa-2026-05-03): code persona 之前 Win 端漏暴露
-                      （WIN-005），Mac 端有但 Win 这个 picker 缺。补齐 4/4。 */}
                   <option value="code">代码注释</option>
                 </select>
               }
             />
-            {/* (v0.9 Editorial Chinese) 整理风格实时案例预览 —— 让用户一眼看见
-                4 个 persona 把同一句口语会处理成什么样，省去先保存再录一段才知道
-                差异。例句故意带口语啰嗦 + 中英混 + 一个数字，4 种处理风格一目了然。 */}
             {draft.stylist_enabled && (
               <div className="px-4 pb-4 pt-1">
                 <PersonaPreview persona={draft.stylist_persona} />
@@ -741,23 +712,10 @@ export default function SettingsSheet({
                 />
               </TypelessCard>
 
+              {/* (v0.13.2) 识别模型自定义砍 — BYOK 用户走默认 model 即可
+                  （qwen3-asr-flash / whisper-1）；power user 改 cfg.json 也能。 */}
               {draft.engine !== "tititalk_cloud" && (
                 <TypelessCard>
-                  <TypelessRow
-                    iconNode={<Icon name="tag" />}
-                    title="识别模型"
-                    subtitle="留空走默认（百炼用 qwen3-asr-flash / OpenAI 用 whisper-1）"
-                    trailing={
-                      <input
-                        className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white w-44"
-                        value={draft.model}
-                        onChange={(e) => patch("model", e.target.value)}
-                        placeholder={
-                          draft.engine === "qwen" ? "qwen3-asr-flash" : "whisper-1"
-                        }
-                      />
-                    }
-                  />
                   <TypelessRow
                     iconNode={<Icon name="key" />}
                     title="API 密钥"
@@ -776,21 +734,8 @@ export default function SettingsSheet({
               )}
 
               <TypelessCard>
-                <TypelessRow
-                  iconNode={<Icon name="edit" />}
-                  title="整理模型"
-                  subtitle="留空走 qwen-turbo；用了自带 API 密钥就走你的"
-                  trailing={
-                    <input
-                      className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white w-44 disabled:opacity-50"
-                      value={draft.stylist_model}
-                      onChange={(e) => patch("stylist_model", e.target.value)}
-                      placeholder="qwen-turbo"
-                      disabled={!draft.stylist_enabled}
-                    />
-                  }
-                />
-                {/* (v0.8.5 第三轮 Cut#8) 润色强度从主面挪进来——边界探索档 */}
+                {/* (v0.13.2) 整理模型自定义砍 — 默认 qwen-turbo / qwen-flash 即可；
+                    BYOK 用户也走默认。整理强度保留（power user 真碰）。 */}
                 {draft.stylist_enabled && (
                   <TypelessRow
                     iconNode={<Icon name="slider" />}
@@ -839,20 +784,9 @@ export default function SettingsSheet({
                     }
                   />
                 </div>
-                {/* (v0.8.4 P1-2) 词汇检测建议加词典 toggle + banner */}
-                <TypelessRow
-                  iconNode={<Icon name="sparkle" />}
-                  iconColor="#F59E0B"
-                  title="建议加词典"
-                  subtitle="重复出现的英文术语攒满 3 次后，词典上方冒「+ 加进词典」"
-                  trailing={
-                    <Switch
-                      checked={draft.hotword_suggestion_enabled}
-                      onChange={(v) => patch("hotword_suggestion_enabled", v)}
-                    />
-                  }
-                />
-                {draft.hotword_suggestion_enabled && (
+                {/* (v0.13.2) 「建议加词典」toggle 砍 — 默认 ON。候选 banner
+                    自带 3 次门槛 + 用户单点决定加/忽略，不需要再多一个 toggle。 */}
+                {draft.hotword_suggestion_enabled !== false && (
                   <HotwordCandidateBanner
                     onAdd={(token) => {
                       const next = [...draft.dictionary];
@@ -974,6 +908,12 @@ export default function SettingsSheet({
           <span className="text-sm text-ink-500">{testResult}</span>
         </div>
       </div>
+  );
+
+  if (inline) return content;
+  return (
+    <TypelessSheet open={open} title="设置" onClose={onClose}>
+      {content}
     </TypelessSheet>
   );
 }
@@ -1039,15 +979,6 @@ function hotkeyModeHint(mode: AppConfig["hotkey_mode"]): string {
   }
 }
 
-function doubleModifierLabel(key: string): string {
-  switch (key) {
-    case "shift": return "⇧";
-    case "ctrl":  return "⌃";
-    case "opt":   return "⌥（Alt）";
-    case "cmd":   return "⊞（Win 键）";
-    default:      return "";
-  }
-}
 
 function mouseSideLabel(n: number): string {
   switch (n) {
