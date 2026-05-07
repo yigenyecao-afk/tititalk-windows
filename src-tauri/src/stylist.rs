@@ -58,6 +58,17 @@ pub async fn polish(
     if trimmed.chars().count() < 4 {
         return Ok(raw.to_string());
     }
+    // (v0.13.3 极速感专项 P1-6) 短句旁路：长度 ≤ 12 字 + 末尾正常标点 + 不含
+    // 口头禅 + 不含 meta-command 关键词 → 直接返回 raw 当 polished 走，省 LLM
+    // round-trip（典型节省 200-500ms qwen-flash）。跟 Mac ShortSentenceBypass.swift
+    // 同源策略：保守判定，宁可让边界 case 走 LLM。
+    if short_sentence_can_bypass(trimmed, 12) {
+        log::info!(
+            "polish: short-sentence bypass (len={} chars)",
+            trimmed.chars().count()
+        );
+        return Ok(raw.to_string());
+    }
 
     // tititalk_cloud：走平台代理。优先尝试流式 (v0.8.6 #1)，失败 fallback 到一次性。
     if cfg.engine == "tititalk_cloud" {
@@ -357,4 +368,72 @@ struct ChatChoice {
 #[derive(Deserialize)]
 struct ChatChoiceMessage {
     content: String,
+}
+
+/// (v0.13.3 极速感专项 P1-6) 短句旁路判定 —— 跟 Mac ShortSentenceBypass.swift
+/// 同源策略：保守判定，宁可让边界 case 走 LLM 也不要 over-bypass。
+///
+/// 条件 AND：
+///   1. 长度 ≤ max_chars
+///   2. 末尾是正常标点（。！？.!?）
+///   3. 不含口头禅（嗯/啊/那个/uh/um...）
+///   4. 不含 meta-command 关键词（翻译/改正式/总结/translate...）
+fn short_sentence_can_bypass(trimmed: &str, max_chars: usize) -> bool {
+    if max_chars == 0 {
+        return false;
+    }
+    let len = trimmed.chars().count();
+    if len > max_chars {
+        return false;
+    }
+    let last = match trimmed.chars().last() {
+        Some(c) => c,
+        None => return false,
+    };
+    let end_punct = ['。', '！', '？', '…', '）', '」', '.', '!', '?', ')', '"', '\u{201D}'];
+    if !end_punct.contains(&last) {
+        return false;
+    }
+    // 中文口头禅子串命中 → 不旁路
+    let cn_fillers = [
+        "嗯", "啊", "呃", "额", "诶", "哦", "嗨", "唉",
+        "那个", "这个", "就是", "然后", "其实", "对吧",
+        "你知道", "怎么说", "怎么讲", "我觉得",
+        "比如说", "总之", "反正", "这样吧",
+    ];
+    for f in cn_fillers.iter() {
+        if trimmed.contains(*f) {
+            return false;
+        }
+    }
+    // 英文口头禅 word-boundary 命中 → 不旁路
+    let lowered = trimmed.to_lowercase();
+    let padded = format!(" {} ", lowered);
+    let en_fillers = [
+        " uh ", " um ", " uhm ", " ah ", " er ",
+        " you know ", " like ", " well ", " so ",
+        " anyway ", " i mean ", " sort of ", " kind of ",
+    ];
+    for f in en_fillers.iter() {
+        if padded.contains(*f) {
+            return false;
+        }
+    }
+    // meta-command 关键词命中 → 不旁路（让 LLM 走 meta-command 流程）
+    let cn_triggers = [
+        "翻译", "改正式", "改简洁", "改邮件", "总结", "做个总结",
+        "写个", "帮我", "重写",
+    ];
+    for t in cn_triggers.iter() {
+        if trimmed.contains(*t) {
+            return false;
+        }
+    }
+    let en_triggers = ["translate", "summarize", "rewrite"];
+    for t in en_triggers.iter() {
+        if lowered.contains(*t) {
+            return false;
+        }
+    }
+    true
 }
