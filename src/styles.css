@@ -64,3 +64,185 @@
   /* keep brand pill themes unaffected by dark — they have their own palette */
   .pill-themed { color-scheme: light; }
 }
+
+/* ============================================================
+ * 4 pill 主题 (v0.13.0) — 跟 Mac 4 主题视觉对齐
+ * 共享：固定宽 180 高 36，border-radius 9999 = capsule (椭圆)
+ * 不抢焦点：position 由 Tauri window 决定，主题只管内部排版+视觉
+ * ============================================================ */
+
+@keyframes aurora-flow {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+@keyframes pill-breath {
+  0%, 100% { opacity: 0.30; }
+  50%      { opacity: 0.55; }
+}
+
+.pill-ptt-hint {
+  position: absolute;
+  bottom: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: #94a3b8;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* ---------- 简净 (typeless) — 毛玻璃 + 朱砂呼吸边 ---------- */
+.pill-typeless {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 180px;
+  height: 36px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  color: #1e293b;
+  font-size: 12px;
+  overflow: hidden;
+}
+.pill-typeless-content {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 14px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+}
+.pill-typeless-border {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(237, 89, 51, 0.30);
+  pointer-events: none;
+}
+
+/* ---------- 朱砂 (titi) — 品牌色气泡 ---------- */
+.pill-titi {
+  display: flex;
+  align-items: center;
+  width: 180px;
+  height: 36px;
+  border-radius: 9999px;
+  padding: 0 12px;
+  gap: 8px;
+  background: rgba(237, 89, 51, 0.85); /* fallback；TitiPill 走 inline style 覆盖 */
+  color: #fff;
+  font-size: 12px;
+  box-shadow: 0 2px 10px rgba(237, 89, 51, 0.30);
+  position: relative;
+  overflow: hidden;
+}
+.pill-titi-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.pill-titi-text {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+}
+
+/* ---------- 流光 (aurora) — 极光波形 ---------- */
+.pill-aurora {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 180px;
+  height: 36px;
+  border-radius: 9999px;
+  padding: 0 14px;
+  color: #fff;
+  font-size: 12px;
+  background-size: 200% 100%; /* 给 aurora-flow 来回扫光 */
+  box-shadow: 0 2px 12px rgba(120, 80, 200, 0.25);
+  position: relative;
+  overflow: hidden;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.pill-aurora-text {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+}
+
+/* ---------- 素白 (mono) — 白底椭圆细条 ---------- */
+.pill-mono {
+  display: flex;
+  align-items: center;
+  width: 180px;
+  height: 36px;
+  border-radius: 9999px;
+  padding: 0 12px;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1e293b;
+  font-size: 12px;
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  position: relative;
+  overflow: hidden;
+}
+.pill-mono-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  display: inline-block;
+  flex-shrink: 0;
+  transition: transform 80ms linear;
+}
+.pill-mono-text {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+}
+
+/* dark mode：4 主题保留品牌调色，typeless / mono 切深色底防系统暗模式下白光太亮 */
+@media (prefers-color-scheme: dark) {
+  html:not(.force-light) .pill-typeless {
+    background: rgba(20, 22, 27, 0.78);
+    color: #f1f5f9;
+  }
+  html:not(.force-light) .pill-mono {
+    background: rgba(20, 22, 27, 0.92);
+    color: #f1f5f9;
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+}
+html.force-dark .pill-typeless {
+  background: rgba(20, 22, 27, 0.78);
+  color: #f1f5f9;
+}
+html.force-dark .pill-mono {
+  background: rgba(20, 22, 27, 0.92);
+  color: #f1f5f9;
+  border-color: rgba(255, 255, 255, 0.08);
+}

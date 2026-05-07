@@ -6,6 +6,7 @@ import {
   dismissHotwordCandidate,
   clearAllHotwordCandidates,
 } from "../lib/api";
+const VK_VALUES = new Set(VK_CHOICES.map((c) => c.vk));
 import {
   enable as autostartEnable,
   disable as autostartDisable,
@@ -991,6 +992,7 @@ const MOUSE_SIDE_BTNS = new Set([0, 1, 2]);
 const PET_SLUGS = new Set(["boba", "byte-bunny", "mochi-cat", "buddy-corgi", "panda-baba"]);
 const CHATTINESS_VALUES = new Set([0, 1, 2, 3]);
 const LANGUAGES = new Set(["auto", "zh", "en", "yue", "yue_zh"]);
+const OUTPUT_LANG_OVERRIDES = new Set(["", "中文", "English", "日本語", "한국어", "粤语"]);
 
 function normalizeConfigValues(cfg: AppConfig): AppConfig {
   return {
@@ -1000,6 +1002,7 @@ function normalizeConfigValues(cfg: AppConfig): AppConfig {
       : migrateLegacyPillTheme(cfg.pill_theme as unknown as string),
     engine: ENGINES.has(cfg.engine) ? cfg.engine : "tititalk_cloud",
     hotkey_mode: HOTKEY_MODES.has(cfg.hotkey_mode) ? cfg.hotkey_mode : "push_to_talk",
+    hotkey_vk: VK_VALUES.has(cfg.hotkey_vk) ? cfg.hotkey_vk : 0x70, // F1 fallback
     stylist_persona: PERSONAS.has(cfg.stylist_persona) ? cfg.stylist_persona : "friendly",
     polish_intensity: POLISH_INTENSITIES.has(cfg.polish_intensity) ? cfg.polish_intensity : "normal",
     double_modifier_key: DOUBLE_MOD_KEYS.has(cfg.double_modifier_key) ? cfg.double_modifier_key : "",
@@ -1009,6 +1012,9 @@ function normalizeConfigValues(cfg: AppConfig): AppConfig {
       ? cfg.companion_chattiness
       : 2,
     language: LANGUAGES.has(cfg.language) ? cfg.language : "auto",
+    output_language_override: OUTPUT_LANG_OVERRIDES.has(cfg.output_language_override)
+      ? cfg.output_language_override
+      : "",
   };
 }
 
