@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context};
 use futures_util::{SinkExt, StreamExt};
+use parking_lot::Mutex as PLMutex;
 use serde::Deserialize;
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
@@ -55,6 +56,11 @@ pub struct StreamHandle {
     /// PCM 推送通道。caller 在 process_chunk 里塞 i16 LE bytes。
     /// 没有 send 给 channel = WS 任务不发数据；通道 close = WS 任务收 EOF。
     pub pcm_tx: mpsc::UnboundedSender<Vec<u8>>,
+    /// (v0.15.3 速度极致) 最近一次 partial/sentence 的累积文本。WS task
+    /// 每收到一条 partial/sentence 就覆盖写。orchestrate_stop 在发完 stop 后
+    /// 不必死等 server 吐 final，sleep 300ms 让最后一帧 partial 落，然后
+    /// 直接读这个 Mutex 拿当前文本进 polish。500ms-2s 的 server flush 时间省掉。
+    pub last_partial: Arc<PLMutex<String>>,
 }
 
 #[derive(Deserialize)]
@@ -72,9 +78,11 @@ pub fn start_session_async(state: Arc<AppState>, sample_rate: u32) -> StreamHand
     let (pcm_tx, pcm_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (stop_tx, stop_rx) = oneshot::channel::<()>();
     let (final_tx, final_rx) = oneshot::channel::<anyhow::Result<String>>();
+    let last_partial: Arc<PLMutex<String>> = Arc::new(PLMutex::new(String::new()));
+    let last_partial_for_task = last_partial.clone();
 
     tauri::async_runtime::spawn(async move {
-        match prepare_and_run(state, sample_rate, pcm_rx, stop_rx).await {
+        match prepare_and_run(state, sample_rate, pcm_rx, stop_rx, last_partial_for_task).await {
             Ok(text) => { let _ = final_tx.send(Ok(text)); }
             Err(e) => {
                 log::warn!("tititalk-cloud streaming task failed: {e}");
@@ -83,7 +91,7 @@ pub fn start_session_async(state: Arc<AppState>, sample_rate: u32) -> StreamHand
         }
     });
 
-    StreamHandle { stop_tx, final_rx, pcm_tx }
+    StreamHandle { stop_tx, final_rx, pcm_tx, last_partial }
 }
 
 async fn prepare_and_run(
@@ -91,6 +99,7 @@ async fn prepare_and_run(
     sample_rate: u32,
     pcm_rx: mpsc::UnboundedReceiver<Vec<u8>>,
     stop_rx: oneshot::Receiver<()>,
+    last_partial: Arc<PLMutex<String>>,
 ) -> anyhow::Result<String> {
     let event_tx_clear = state.event_tx.clone();
     // (v0.8.3 P0-1) 提前抓一些字段用于失败友好提示
@@ -103,7 +112,7 @@ async fn prepare_and_run(
         log::info!("ASR using prewarmed session (cold-connect saved)");
         // prewarm session 已经 ready，pill 不进 connecting 状态
         let _ = event_tx_clear.send(PipelineEvent::CloudConnecting { connecting: false });
-        return warm_session.run(pcm_rx, stop_rx).await;
+        return warm_session.run(pcm_rx, stop_rx, last_partial).await;
     }
 
     let session = match start_session(state, sample_rate).await {
@@ -126,7 +135,7 @@ async fn prepare_and_run(
             return Err(e);
         }
     };
-    session.run(pcm_rx, stop_rx).await
+    session.run(pcm_rx, stop_rx, last_partial).await
 }
 
 /// prepare 阶段的产物：握手好的 ws + event channel。run() 接 pcm_rx + stop_rx
@@ -244,10 +253,13 @@ pub(crate) async fn start_session(state: Arc<AppState>, sample_rate: u32) -> any
 
 impl StreamSession {
     /// 主循环：select! 轮询三个 source：pcm_rx / stop_rx / ws_stream。
+    /// (v0.15.3 速度极致) `last_partial` 每次收 partial/sentence 时被覆盖写，让
+    /// orchestrate_stop 不必死等 final，300ms 兜底后直接读它进 polish。
     pub(crate) async fn run(
         self,
         mut pcm_rx: mpsc::UnboundedReceiver<Vec<u8>>,
         stop_rx: oneshot::Receiver<()>,
+        last_partial: Arc<PLMutex<String>>,
     ) -> anyhow::Result<String> {
         let StreamSession { mut ws_sink, mut ws_stream, event_tx } = self;
         let mut stop_rx = stop_rx;
@@ -335,6 +347,8 @@ impl StreamSession {
                                 "partial" | "sentence" => {
                                     let text = event.get("text").and_then(|v| v.as_str()).unwrap_or("");
                                     if !text.is_empty() {
+                                        // (v0.15.3) 同时落 Mutex —— orchestrate_stop 拿这个直接进 polish
+                                        *last_partial.lock() = text.to_string();
                                         let _ = event_tx.send(PipelineEvent::Partial { text: text.into() });
                                     }
                                 }

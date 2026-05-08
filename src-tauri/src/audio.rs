@@ -273,32 +273,48 @@ pub async fn orchestrate_stop(state: Arc<AppState>) {
 
     let cfg = state.config.read().clone();
 
-    // (v0.7.6) 优先走流式 final；只有 stream_handle 是 None 或 streaming 失败
-    // 才回退 batch。
+    // (v0.15.3 速度极致) 流式引擎 fast-close：发完 stop 后 sleep 300ms 让最后
+    // 一帧 partial 落地（typical 50-150ms），然后直接读 last_partial Mutex 进
+    // polish —— 不再死等 server 吐 final（之前 30s timeout，正常 200ms-2s flush，
+    // 卡顿时 5-10s）。end-to-end "按 stop → 看到文字" 砍 200ms-2s。
+    //
+    // 极端 path：300ms 内 last_partial 还空（开口太晚 / WS 还没收到 ready /
+    // 服务端没吐过 partial），降级等 final_rx 5s（之前 30s 太长）；再失败 fallback batch。
     let raw_result: anyhow::Result<String> = if let Some(handle) = stream_handle {
-        let _ = handle.stop_tx.send(()); // 通知 ws 任务发 stop 事件
-        // final_rx 等服务端 final；本地 30s 上限够长（服务端 5min cap，但单条
-        // 60s 录音 flush 通常 <2s）。失败 fallback batch。
-        match tokio::time::timeout(std::time::Duration::from_secs(30), handle.final_rx).await {
-            Ok(Ok(Ok(text))) => {
-                // 成功 —— 清空 partial（pill 上的过程文消失，下面 transcript 替代）
-                state.emit(PipelineEvent::Partial { text: String::new() });
-                Ok(text)
-            }
-            Ok(Ok(Err(e))) => {
-                log::warn!("streaming final err, fallback to batch: {e}");
-                state.emit(PipelineEvent::Partial { text: String::new() });
-                asr::transcribe(&cfg, &captured, &state).await
-            }
-            Ok(Err(_canceled)) => {
-                log::warn!("streaming final channel closed, fallback to batch");
-                state.emit(PipelineEvent::Partial { text: String::new() });
-                asr::transcribe(&cfg, &captured, &state).await
-            }
-            Err(_timeout) => {
-                log::warn!("streaming final timeout 30s, fallback to batch");
-                state.emit(PipelineEvent::Partial { text: String::new() });
-                asr::transcribe(&cfg, &captured, &state).await
+        let _ = handle.stop_tx.send(());
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let snapshot = handle.last_partial.lock().clone();
+        if !snapshot.trim().is_empty() {
+            log::info!(
+                "fast-close: 跳过 server final 等待（partial={} chars）",
+                snapshot.chars().count()
+            );
+            state.emit(PipelineEvent::Partial { text: String::new() });
+            // final_rx 不再 await —— handle drop 后 task 仍跑完 server final 然后
+            // 因 final_tx send 失败自然退出，PCM/WS 不漏。
+            Ok(snapshot)
+        } else {
+            log::info!("fast-close: 300ms 内无 partial — 降级等 final_rx 5s");
+            match tokio::time::timeout(std::time::Duration::from_secs(5), handle.final_rx).await {
+                Ok(Ok(Ok(text))) => {
+                    state.emit(PipelineEvent::Partial { text: String::new() });
+                    Ok(text)
+                }
+                Ok(Ok(Err(e))) => {
+                    log::warn!("streaming final err, fallback to batch: {e}");
+                    state.emit(PipelineEvent::Partial { text: String::new() });
+                    asr::transcribe(&cfg, &captured, &state).await
+                }
+                Ok(Err(_canceled)) => {
+                    log::warn!("streaming final channel closed, fallback to batch");
+                    state.emit(PipelineEvent::Partial { text: String::new() });
+                    asr::transcribe(&cfg, &captured, &state).await
+                }
+                Err(_timeout) => {
+                    log::warn!("streaming final timeout 5s, fallback to batch");
+                    state.emit(PipelineEvent::Partial { text: String::new() });
+                    asr::transcribe(&cfg, &captured, &state).await
+                }
             }
         }
     } else {
