@@ -339,6 +339,12 @@ pub fn run() {
                             text: text.clone(),
                             engine: cfg.engine.clone(),
                             model: Some(cfg.model.clone()),
+                            // (v0.15.2 C1) 新字段 — 实时落地条目暂时填空，工作台
+                            // 摘要/章节后续触发时再 attach 写回（Phase 4 wav 归档
+                            // 接通后 duration_ms 会有真值；当前没法准确算 PCM 时长）。
+                            polished: String::new(),
+                            duration_ms: None,
+                            analysis_reports: None,
                         };
                         drop(cfg);
                         // append 是同步 fs，几十微秒；不值得起 spawn_blocking。
