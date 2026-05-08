@@ -27,9 +27,42 @@ use crate::state::{AppState, PipelineEvent, PipelinePhase};
 use crate::stylist;
 
 const TARGET_SR: u32 = 16_000;
-/// 5 min — paraformer-realtime-v2 streams comfortably to this length, matches
-/// server WS session cap (MAX_SESSION_SEC=300), and lifts the old 60s wall users hit.
+/// 短句模式 5 min — paraformer-realtime-v2 streams comfortably to this length,
+/// matches server WS session cap (MAX_SESSION_SEC=300), and lifts the old 60s wall.
+/// (v0.15.0 长录音工作台) 用户从「记录」tab 显式 arm 长录音 → 走 config
+/// `long_recording_max_sec`（默认 1800/30min；Pro 可拉到 7200/2h，旗舰 21600/6h）。
+/// 走 current_max_duration_secs() 动态 dispatch；buffer 仍 const 初值 5min，
+/// Vec 会自动 grow。
 const MAX_DURATION_SECS: f32 = 300.0;
+
+/// (v0.15.0) 当前 session 的 cap — armed 走长录音上限，否则 5min。
+/// 进入 capture loop 那刻 snapshot 一次；loop 内不变。
+fn current_max_duration_secs() -> f32 {
+    let cfg = crate::config::load_config();
+    if cfg.long_recording_armed {
+        cfg.long_recording_max_sec.max(60) as f32
+    } else {
+        MAX_DURATION_SECS
+    }
+}
+
+/// (v0.15.0) one-shot disarm — orchestrate_stop / orchestrate_cancel 调一次。
+/// 写回 cfg.json + 同步运行时 state.config 内存副本，让前端轮询 cfg 的代码立刻
+/// 看到 long_recording_armed=false。Mac VoicePipeline.stop()/cancel() 同语义。
+fn disarm_long_recording_if_armed(state: &Arc<AppState>) {
+    let mut needs_save = false;
+    {
+        let mut cfg = state.config.write();
+        if cfg.long_recording_armed {
+            cfg.long_recording_armed = false;
+            needs_save = true;
+        }
+    }
+    if needs_save {
+        let snapshot = state.config.read().clone();
+        let _ = crate::config::save_config(&snapshot);
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapturedAudio {
@@ -140,6 +173,8 @@ pub async fn orchestrate_start(state: Arc<AppState>) {
 /// (v0.8.3 P0-3) ESC 取消录音 —— 跟 stop 不同：丢弃 PCM、不转写、不插入。
 /// 也回收 system mute / cloud ws / streaming pcm tx 等所有副作用。
 pub async fn orchestrate_cancel(state: Arc<AppState>) {
+    // (v0.15.0) 长录音 one-shot disarm — 跟 Mac VoicePipeline.cancel() 对齐。
+    disarm_long_recording_if_armed(&state);
     let (rx, stream_handle) = {
         let mut active = ACTIVE.lock();
         let Some(handle) = active.as_mut() else {
@@ -168,6 +203,8 @@ pub async fn orchestrate_cancel(state: Arc<AppState>) {
 }
 
 pub async fn orchestrate_stop(state: Arc<AppState>) {
+    // (v0.15.0) 长录音 one-shot disarm — 跟 Mac VoicePipeline.stop() 对齐。
+    disarm_long_recording_if_armed(&state);
     state.set_phase(PipelinePhase::Stopping);
     state.emit(PipelineEvent::Sound { sound: "stop".into() });
 
@@ -543,9 +580,10 @@ fn capture_blocking(
     ))?;
 
     let start = std::time::Instant::now();
+    let session_cap = current_max_duration_secs();
     while !*stop_flag.lock() {
-        if start.elapsed().as_secs_f32() > MAX_DURATION_SECS {
-            log::warn!("hit max duration {MAX_DURATION_SECS}s, force stop");
+        if start.elapsed().as_secs_f32() > session_cap {
+            log::warn!("hit max duration {session_cap}s, force stop");
             break;
         }
         std::thread::sleep(Duration::from_millis(20));

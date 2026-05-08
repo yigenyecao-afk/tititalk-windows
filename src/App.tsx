@@ -351,7 +351,9 @@ export default function App() {
         </div>
         <nav className="px-2 mt-1 space-y-1 flex-1">
           <NavBtn active={tab === "home"} onClick={() => setTab("home")}>首页</NavBtn>
-          <NavBtn active={tab === "history"} onClick={() => setTab("history")}>历史记录</NavBtn>
+          {/* (v0.15.0) 「历史记录」→「记录」— 短句历史 + 长录音工作台合并到一处。
+              tab id 仍是 "history" 兼容选中态持久化（如有），label 改成「记录」。 */}
+          <NavBtn active={tab === "history"} onClick={() => setTab("history")}>记录</NavBtn>
           {/* (P1-10 2026-05-06) 词典 tab——跟 Mac 对齐，频次高的入口直接顶级 */}
           <NavBtn active={tab === "dictionary"} onClick={() => setTab("dictionary")}>词典</NavBtn>
           {/* (v0.13.2) 设置 tab — 砍 sheet 模态改 inline，最后一项 */}
@@ -419,6 +421,29 @@ export default function App() {
         {tab === "history" && (
           <div className="flex flex-col h-full">
             <HistoryQuotaBanner />
+            {/* (v0.15.0) 「记录」tab 顶部 actionsBar — 「+ 新长录音」「↓ 导入文件」入口。
+                跟 Mac MainWindowView+HistoryView recordingsActionsBar 同源；
+                arm/disarm 通过 saveConfig 改 long_recording_armed 字段（cfg
+                重 fetch 后 audio.rs current_max_duration_secs() 自动跟着切）。 */}
+            {cfg && (
+              <RecordingsActionsBar
+                cfg={cfg}
+                onArmToggle={async () => {
+                  const next = {
+                    ...cfg,
+                    long_recording_armed: !cfg.long_recording_armed,
+                  };
+                  try {
+                    await saveConfig(next);
+                    setCfg(next);
+                  } catch (e) {
+                    console.error("arm long recording:", e);
+                  }
+                }}
+                onOpenBatch={() => setShowBatchPanel(true)}
+                count={recent.length}
+              />
+            )}
             <div className="flex-1 p-8 overflow-y-auto">
               <HistoryPane
                 items={recent}
@@ -1506,6 +1531,63 @@ function Banner({
           aria-label="关闭"
         >✕</button>
       )}
+    </div>
+  );
+}
+
+// (v0.15.0) 「记录」tab 顶部 actionsBar — 「+ 新长录音」「↓ 导入文件」双入口。
+// armed=true 时按钮变红 + 状态条提示「按住快捷键开始 — 最长 X 分钟」。
+// session 真录完后由 audio.rs orchestrate_stop disarm_long_recording_if_armed
+// 自动写回 cfg.long_recording_armed=false；前端下次拉 cfg 时自然 reset。
+function RecordingsActionsBar({
+  cfg,
+  onArmToggle,
+  onOpenBatch,
+  count,
+}: {
+  cfg: AppConfig;
+  onArmToggle: () => void;
+  onOpenBatch: () => void;
+  count: number;
+}) {
+  const armed = cfg.long_recording_armed;
+  const maxMin = Math.max(1, Math.floor((cfg.long_recording_max_sec ?? 1800) / 60));
+  return (
+    <div className="px-4 py-2 flex items-center gap-2 border-b border-ink-100 bg-ink-50/50">
+      <button
+        type="button"
+        onClick={onArmToggle}
+        className={
+          "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition " +
+          (armed
+            ? "bg-red-500 text-white hover:bg-red-600"
+            : "bg-indigo-600 text-white hover:bg-indigo-700")
+        }
+        title={
+          armed
+            ? `下次按下快捷键将进入长录音模式（最长 ${maxMin} 分钟），自动归档到记录里`
+            : `进入长录音模式 — sessionCap 拉到 ${maxMin} 分钟；录完自动归类长录音卡`
+        }
+      >
+        <span>{armed ? "● 长录音待命中" : "+ 新长录音"}</span>
+      </button>
+      <button
+        type="button"
+        onClick={onOpenBatch}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-ink-200 bg-white hover:bg-ink-50 text-ink-700"
+        title="拖入 mp3 / m4a / wav — 转写后落到记录列表"
+      >
+        ↓ 导入文件
+      </button>
+      <div className="ml-auto text-[11px] text-ink-500">
+        {armed ? (
+          <span className="text-red-600 font-medium">
+            按住快捷键开始 — 最长 {maxMin} 分钟
+          </span>
+        ) : (
+          <span>{count} 条记录</span>
+        )}
+      </div>
     </div>
   );
 }

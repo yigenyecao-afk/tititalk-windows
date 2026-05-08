@@ -64,6 +64,11 @@ export interface AppConfig {
   telemetry_app_context_enabled: boolean;
   /// (v0.14.1) onboarding_completed 字段保留兼容老 cfg.json，新 UI 不再读写。
   onboarding_completed: boolean;
+  /// (v0.15.0) 长录音单次上限（秒）。短句模式仍走 300s（audio.rs MAX_DURATION_SECS）；
+  /// 用户从「记录」tab arm 长录音才生效。默认 1800 (30min)；Pro 7200 (2h)，旗舰 21600 (6h)。
+  long_recording_max_sec: number;
+  /// (v0.15.0) 当前是否长录音模式 armed。one-shot — orchestrate_stop/cancel 自动 disarm。
+  long_recording_armed: boolean;
 }
 
 /// (v0.13.0) 4 主题对齐 Mac 老 4 主题；老 Editorial key（lantern/annotation/

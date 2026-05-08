@@ -147,6 +147,20 @@ pub struct AppConfig {
     /// (v0.14.1) 字段保留兼容老 cfg.json + cloud sync echo；新 UI 不再读写。
     #[serde(default = "no")]
     pub onboarding_completed: bool,
+
+    /// (v0.15.0 长录音工作台) 单次录音上限（秒）。短句模式仍走 300s（audio.rs
+    /// MAX_DURATION_SECS）；用户从「记录」tab 显式 arm 长录音才走这个值。
+    /// 默认 1800 (30min) — 对齐免费档每日 quota；Pro 7200 (2h)，旗舰 21600 (6h)。
+    #[serde(default = "default_long_recording_max_sec")]
+    pub long_recording_max_sec: u32,
+
+    /// (v0.15.0) 当前是否「长录音模式 armed」—— 用户从「记录」tab 点「+ 新长
+    /// 录音」按钮 toggle。armed=true 时下次 capture 用 long_recording_max_sec
+    /// 而不是 MAX_DURATION_SECS；session 结束（stop / cancel）由 audio.rs
+    /// orchestrate_stop 自动 disarm 回 false（one-shot 语义跟 Mac 同步）。
+    /// 不持久化语义但落 cfg.json 没害（启动后默认 false 也 OK）。
+    #[serde(default = "no")]
+    pub long_recording_armed: bool,
 }
 
 fn default_engine() -> String { "tititalk_cloud".into() }
@@ -185,6 +199,7 @@ fn default_output_language_override() -> String { String::new() }
 fn default_pill_theme() -> String { "lantern".into() }
 fn default_companion_slug() -> String { "boba".into() }
 fn default_companion_chattiness() -> u8 { 2 }
+fn default_long_recording_max_sec() -> u32 { 1800 }  // (v0.15.0) 30min，跟免费 quota 对齐
 fn yes() -> bool { true }
 fn no() -> bool { false }
 
@@ -228,6 +243,8 @@ impl Default for AppConfig {
             pill_enabled: false,
             telemetry_app_context_enabled: true,
             onboarding_completed: false,
+            long_recording_max_sec: default_long_recording_max_sec(),
+            long_recording_armed: false,
         }
     }
 }
