@@ -110,6 +110,14 @@ static ACTIVE: once_cell::sync::Lazy<Mutex<Option<CaptureHandle>>> =
 static STREAMING_PCM_TX: once_cell::sync::Lazy<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 
+/// (v0.15.2 C3) PCM heartbeat — 每次 process_chunk_* 收到非空数据更新此时间戳。
+/// capture_blocking 主循环每 1s 检查：如果 >3s 没新数据但 stop_flag 未置位 →
+/// 视为设备死了（蓝牙耳机突然断电 / USB 拔掉但 cpal 没报 error 的边角场景）。
+/// 跟 Mac VoicePipeline.pcmHeartbeatTask 同语义。Notice 给前端，不强制 stop —
+/// 让用户看到提示自己决定再录还是检查设备，避免静默失败。
+static LAST_PCM_AT: once_cell::sync::Lazy<Mutex<Option<std::time::Instant>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(None));
+
 pub async fn orchestrate_start(state: Arc<AppState>) {
     // 权限预检：在 set_phase(Recording) 之前确认麦克风可用，避免「pill 亮了
     // 红点用户开始说话，结果系统弹框遮住、直到松手才发现没录到」。预检即
@@ -581,13 +589,32 @@ fn capture_blocking(
 
     let start = std::time::Instant::now();
     let session_cap = current_max_duration_secs();
+    *LAST_PCM_AT.lock() = Some(start);  // (v0.15.2 C3) heartbeat 初值
+    let mut last_heartbeat_check = start;
+    let mut heartbeat_warned = false;
     while !*stop_flag.lock() {
         if start.elapsed().as_secs_f32() > session_cap {
             log::warn!("hit max duration {session_cap}s, force stop");
             break;
         }
+        // (v0.15.2 C3) PCM heartbeat watchdog — 每 1s 检查 process_chunk_*
+        // 最近一次更新时间。>3s 没新数据视为设备死了（蓝牙耳机断电 / USB
+        // 拔掉但 cpal 不报 error 的边角场景）。Notice 给前端，不强制 stop —
+        // 让用户看到提示自己决定再录还是检查设备，避免静默失败录到一段空音频。
+        if last_heartbeat_check.elapsed() > Duration::from_secs(1) {
+            last_heartbeat_check = std::time::Instant::now();
+            let last = LAST_PCM_AT.lock().unwrap_or(start);
+            if !heartbeat_warned && last.elapsed() > Duration::from_secs(3) {
+                heartbeat_warned = true;
+                log::warn!("pcm heartbeat: no data >3s — device may be dead");
+                let _ = event_tx.send(PipelineEvent::Notice {
+                    message: "麦克风没有声音了 — 设备可能掉线了。建议松开快捷键重录，并检查蓝牙/USB 麦克风是否正常。".into(),
+                });
+            }
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
+    *LAST_PCM_AT.lock() = None;  // 清除等下次 capture
     drop(stream);
 
     let samples = std::mem::take(&mut *collected.lock());
@@ -627,6 +654,8 @@ fn process_chunk_f32(
     // 其它引擎 None → 这里直接跳过，0 开销。channel send 失败（已 close）也
     // 安全忽略，capture 线程不该因为 ws 出问题而崩。
     if !buf.is_empty() {
+        // (v0.15.2 C3) 心跳更新 — 主 loop watchdog 用
+        *LAST_PCM_AT.lock() = Some(std::time::Instant::now());
         if let Some(tx) = STREAMING_PCM_TX.lock().clone() {
             let mut bytes = Vec::with_capacity(buf.len() * 2);
             for s in &buf {

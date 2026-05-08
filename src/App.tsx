@@ -10,10 +10,12 @@ import {
   forceStop,
   getConfig,
   getHistoryRecent,
+  isLongRecording,
   onPipeline,
   openMicSettings,
   saveConfig,
   VK_CHOICES,
+  type PersistedHistoryItem,
 } from "./lib/api";
 import type { AppConfig, PipelineEvent, PipelinePhase } from "./lib/types";
 import {
@@ -55,7 +57,9 @@ export default function App() {
   // (v0.13.2) showSettings state 砍 — 设置改 inline tab="settings" 渲染
   const [showAccount, setShowAccount] = useState(false);
   const [cfg, setCfg] = useState<AppConfig | null>(null);
-  const [recent, setRecent] = useState<{ at: string; text: string }[]>([]);
+  // (v0.15.2 C1) recent 升 PersistedHistoryItem[] 携带 polished/duration_ms/
+  // analysis_reports — 工作台需要这些字段。getHistoryRecent 已经返回完整类型。
+  const [recent, setRecent] = useState<PersistedHistoryItem[]>([]);
   const [statusLine, setStatusLine] = useState<string>("待命中");
   const [phase, setPhase] = useState<PipelinePhase>("idle");
   const [lastError, setLastError] = useState<string>("");
@@ -83,6 +87,8 @@ export default function App() {
   const [repolishOpen, setRepolishOpen] = useState(false);
   const [repolishItems, setRepolishItems] = useState<{ id: string; text: string }[]>([]);
   const [showBatchPanel, setShowBatchPanel] = useState(false);
+  // (v0.15.2 C1) 长录音工作台 — 选中长录音 item 后弹 modal sheet 显示 6-tab 工作台
+  const [workbenchItem, setWorkbenchItem] = useState<PersistedHistoryItem | null>(null);
   /// (P1-14 2026-05-06) Hotkey cheatsheet 浮窗。Ctrl+Alt+Shift+/ 唤起，6s 自关。
   const [cheatsheetOpen, setCheatsheetOpen] = useState(false);
   /// (P1-12 用户外观 2026-05-06) localStorage 存的外观偏好；prefers-color-scheme
@@ -160,7 +166,7 @@ export default function App() {
     window.addEventListener("titi:request-config-reload", reloadHandler);
     // 启动时拉持久化历史（最近 50 条）—— transcript 增量再走 onPipeline。
     getHistoryRecent(50)
-      .then((items) => setRecent(items.map((it) => ({ at: it.at, text: it.text }))))
+      .then((items) => setRecent(items))
       .catch((e) => console.warn("history load:", e));
     const accountUn = onAccountState(setAccount);
     const un = onPipeline((ev: PipelineEvent) => {
@@ -178,7 +184,13 @@ export default function App() {
         // (v0.7.6) 流式 ASR 进行中文本 — 顶部状态条实时显示，跟 pill 跑马灯一致
         setStatusLine("识别中：" + ev.text.slice(0, 30));
       } else if (ev.kind === "transcript") {
-        setRecent((r) => [{ at: new Date().toISOString(), text: ev.text }, ...r].slice(0, 50));
+        // (v0.15.2 C1) 实时增量条目用 PersistedHistoryItem 形态；新条目持久化由
+        // 后端 history.rs 写 jsonl，前端这里只填最少字段（polished/duration 等
+        // 再下次 getHistoryRecent 拉时拿后端权威数据）。
+        setRecent((r) => [
+          { at: new Date().toISOString(), text: ev.text, engine: "", model: null },
+          ...r,
+        ].slice(0, 50));
         setStatusLine("已转写：" + ev.text.slice(0, 30));
         setUpgrade(null); // success — clear any stale upgrade banner
         // (v0.7.5 lastError-stale fix) transcript 成功也清 lastError —— 跟 Mac
@@ -453,6 +465,7 @@ export default function App() {
                   setRepolishOpen(true);
                 }}
                 onOpenBatch={() => setShowBatchPanel(true)}
+                onOpenWorkbench={(item) => setWorkbenchItem(item)}
               />
             </div>
           </div>
@@ -532,6 +545,14 @@ export default function App() {
         open={showAccount}
         onClose={() => setShowAccount(false)}
       />
+      {/* (v0.15.2 C1) 长录音工作台 modal — 选中 long item 后弹 */}
+      {workbenchItem && cfg && (
+        <RecordingsWorkbenchSheet
+          item={workbenchItem}
+          cfg={cfg}
+          onClose={() => setWorkbenchItem(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1597,12 +1618,15 @@ function HistoryPane({
   onClear,
   onOpenRepolish,
   onOpenBatch,
+  onOpenWorkbench,
 }: {
-  items: { at: string; text: string }[];
+  items: PersistedHistoryItem[];
   onClear: () => void;
   onOpenRepolish: (its: { id: string; text: string }[]) => void;
   onOpenBatch: () => void;
+  onOpenWorkbench: (item: PersistedHistoryItem) => void;
 }) {
+  // onOpenWorkbench 在下面 article 行的「📑 工作台」按钮点击调用
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // P0 wave 3 #6 — 历史搜索（client-side filter）+ 多选 + 批量重润色
@@ -1818,6 +1842,23 @@ function HistoryPane({
                   <span>{time}</span>
                   <span>·</span>
                   <span className="tabular-nums">{(it.text ?? "").length} 字</span>
+                  {/* (v0.15.2 C1) 长录音 chip — ≥60s OR ≥200 字 */}
+                  {isLongRecording(items[i]) && (
+                    <>
+                      <span>·</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenWorkbench(items[i]);
+                        }}
+                        className="text-indigo-600 hover:underline font-medium"
+                        title="打开长录音工作台"
+                      >
+                        📑 工作台
+                      </button>
+                    </>
+                  )}
                 </div>
                 <div className="font-serif text-[15px] leading-[1.75] text-ink-900 whitespace-pre-wrap break-words">
                   {it.text}
@@ -2021,6 +2062,306 @@ function HotkeyCheatsheetOverlay({ onClose, cfg }: { onClose: () => void; cfg: A
           6 秒后自动关闭 · Esc 立即关
         </div>
       </div>
+    </div>
+  );
+}
+
+// (v0.15.2 C1) 长录音工作台 modal sheet — Win 端 minimum viable 版本。
+// Mac RecordingWorkbench 是 split-view 6 tab full-feature；Win 数据浅（无
+// segments / wavPath / analysisReports 持久化），只能做 4 tab：
+//   - 原文 (raw + polished)
+//   - 摘要 (BYOK fetch DashScope，结果只在 modal session 内缓存，关闭即丢)
+//   - 导出 (md / 复制)
+//   - 元信息 (at / engine / model / 字数 / duration)
+// chapters / actions / SRT / mini player 显示「需要 Mac 端 v2.15.x」placeholder。
+// Phase 4 (v0.16.0+) 时 Win 端补 wav 归档 + segments 后再来填血肉。
+function RecordingsWorkbenchSheet({
+  item,
+  cfg,
+  onClose,
+}: {
+  item: PersistedHistoryItem;
+  cfg: AppConfig;
+  onClose: () => void;
+}) {
+  type Tab = "transcript" | "summary" | "export" | "meta";
+  const [tab, setTab] = useState<Tab>("transcript");
+  const [summaryText, setSummaryText] = useState<string>(
+    item.analysis_reports?.summary ?? ""
+  );
+  const [summaryRunning, setSummaryRunning] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  const t = new Date(item.at);
+  const dateStr = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")} ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+  const text = item.text ?? "";
+  const polished = item.polished ?? "";
+
+  const formatDuration = (ms: number | null | undefined) => {
+    if (!ms) return "—";
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s} 秒`;
+    const m = Math.floor(s / 60);
+    const rs = s % 60;
+    return rs === 0 ? `${m} 分钟` : `${m} 分 ${rs} 秒`;
+  };
+
+  const runSummary = async () => {
+    if (summaryRunning) return;
+    setSummaryRunning(true);
+    setSummaryError(null);
+    const body = (polished || text).slice(0, 8000);
+    const apiKey = cfg.api_key?.trim() ?? "";
+    if (!apiKey) {
+      setSummaryError("需要 BYOK API Key 才能生成摘要");
+      setSummaryRunning(false);
+      return;
+    }
+    const baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    const model = cfg.stylist_model || "qwen-flash";
+    try {
+      const resp = await fetch(`${baseURL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: "你只用中文输出，简洁不啰嗦" },
+            {
+              role: "user",
+              content: `你是会议/录音总结助手。下面是一段录音转写文本。请输出：\n1. 第一行：一句话标题（不超过 30 字）\n2. 接下来：3-5 个关键点，每行以「·」开头，单行不超过 60 字\n只输出标题 + bullets，不要其它解释。\n\n── 转写文本 ──\n${body}`,
+            },
+          ],
+          temperature: 0.3,
+          max_tokens: 800,
+        }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data: { choices?: Array<{ message?: { content?: string } }> } = await resp.json();
+      const content = data?.choices?.[0]?.message?.content?.trim() ?? "";
+      if (!content) throw new Error("响应为空");
+      setSummaryText(content);
+    } catch (e) {
+      setSummaryError(`生成失败：${String(e)}。检查 BYOK key 是否填了 / 网络是否通。`);
+    } finally {
+      setSummaryRunning(false);
+    }
+  };
+
+  const exportMarkdown = () => {
+    const md = [
+      `# ${(polished || text).split("\n")[0].slice(0, 60) || "未命名长录音"}`,
+      "",
+      `- 时长：${formatDuration(item.duration_ms)}`,
+      `- 时间：${dateStr}`,
+      `- 引擎：${item.engine || "—"} · ${item.model || "—"}`,
+      "",
+      "## 润色后",
+      "",
+      polished || "（无）",
+      "",
+      "## 原始转写",
+      "",
+      text || "（无）",
+    ].join("\n");
+    const blob = new Blob([md], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `TiTiTalk-${Math.floor(t.getTime() / 1000)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const copyAll = async () => {
+    try {
+      await navigator.clipboard.writeText(polished || text);
+    } catch {
+      // 旧 Edge 兜底
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-[720px] max-h-[85vh] rounded-lg shadow-2xl flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* header */}
+        <div className="px-5 py-3 border-b border-ink-100 flex items-center gap-3">
+          <span className="text-xl">📑</span>
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-ink-900 truncate">
+              {(polished || text).split("\n")[0].slice(0, 60) || "未命名长录音"}
+            </div>
+            <div className="text-[11px] text-ink-500 mt-0.5 font-mono tabular-nums">
+              {formatDuration(item.duration_ms)} · {dateStr} · {(text || "").length} 字
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-ink-500 hover:text-ink-900 text-xl"
+            title="关闭"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* tab bar */}
+        <div className="px-3 py-1.5 border-b border-ink-100 flex gap-1 bg-ink-50/40">
+          {(
+            [
+              ["transcript", "原文"],
+              ["summary", "摘要"],
+              ["export", "导出"],
+              ["meta", "元信息"],
+            ] as Array<[Tab, string]>
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={
+                "px-3 py-1 text-[12px] rounded-full transition " +
+                (tab === id
+                  ? "bg-indigo-100 text-indigo-700 font-semibold"
+                  : "text-ink-600 hover:bg-ink-100")
+              }
+            >
+              {label}
+            </button>
+          ))}
+          <div className="ml-auto text-[10px] text-ink-400 self-center pr-2">
+            Mac 版有完整 6-tab（含章节/Actions/SRT/mini player）
+          </div>
+        </div>
+
+        {/* tab content */}
+        <div className="flex-1 overflow-y-auto p-5 text-[14px] leading-[1.7]">
+          {tab === "transcript" && (
+            <div className="space-y-4">
+              {polished && (
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-ink-500 font-semibold mb-2">
+                    润色后
+                  </div>
+                  <div className="text-ink-900 whitespace-pre-wrap break-words font-serif">
+                    {polished}
+                  </div>
+                </div>
+              )}
+              {text && text !== polished && (
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-ink-500 font-semibold mb-2">
+                    原始转写
+                  </div>
+                  <div className="text-ink-700 whitespace-pre-wrap break-words font-serif text-[13px]">
+                    {text}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {tab === "summary" && (
+            <div className="space-y-3">
+              {summaryText ? (
+                <>
+                  <div className="text-ink-900 whitespace-pre-wrap font-serif">
+                    {summaryText}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={runSummary}
+                    disabled={summaryRunning}
+                    className="px-3 py-1.5 text-[12px] border border-ink-200 rounded-md hover:bg-ink-50 disabled:opacity-50"
+                  >
+                    {summaryRunning ? "重新生成中…" : "🔄 重新生成"}
+                  </button>
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <div className="p-3 rounded-md bg-ink-50/60 text-[13px] text-ink-700 leading-[1.6]">
+                    点下面按钮跑一次 — 把整段录音喂给 LLM，输出 1 句标题 + 3-5 个关键点。
+                    需要在 Settings 里填 BYOK API Key。
+                  </div>
+                  <button
+                    type="button"
+                    onClick={runSummary}
+                    disabled={summaryRunning}
+                    className="px-4 py-2 text-[13px] font-semibold bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {summaryRunning ? "生成中…" : "✨ 生成摘要"}
+                  </button>
+                </div>
+              )}
+              {summaryError && (
+                <div className="p-3 rounded-md bg-orange-50 border border-orange-200 text-[12px] text-red-700">
+                  {summaryError}
+                </div>
+              )}
+            </div>
+          )}
+          {tab === "export" && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={exportMarkdown}
+                  className="px-4 py-2 text-[13px] border border-ink-200 rounded-md hover:bg-ink-50"
+                >
+                  📝 Markdown (.md)
+                </button>
+                <button
+                  type="button"
+                  onClick={copyAll}
+                  className="px-4 py-2 text-[13px] border border-ink-200 rounded-md hover:bg-ink-50"
+                >
+                  📋 复制全文
+                </button>
+              </div>
+              <div className="p-3 rounded-md bg-ink-50/60 text-[12px] text-ink-600 leading-[1.6]">
+                SRT 字幕 / 章节 / 音频文件导出依赖时间戳元数据 + 录音原文件，Win 端
+                v0.16.0 后跟进；当前用 Mac 端打开同一条记录可走完整工作台。
+              </div>
+            </div>
+          )}
+          {tab === "meta" && (
+            <div className="space-y-2 text-[13px] font-mono">
+              <MetaRow k="时间" v={dateStr} />
+              <MetaRow k="时长" v={formatDuration(item.duration_ms)} />
+              <MetaRow k="引擎" v={item.engine || "—"} />
+              <MetaRow k="模型" v={item.model || "—"} />
+              <MetaRow k="字数" v={`${text.length} 字`} />
+              <MetaRow
+                k="缓存分析"
+                v={
+                  item.analysis_reports
+                    ? Object.keys(item.analysis_reports).join(", ")
+                    : "—"
+                }
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetaRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex gap-3">
+      <div className="w-20 text-ink-500">{k}</div>
+      <div className="flex-1 text-ink-900 break-all">{v}</div>
     </div>
   );
 }

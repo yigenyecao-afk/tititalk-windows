@@ -43,7 +43,18 @@ export default function PillApp() {
       } else if (ev.kind === "level") {
         setRms(ev.rms);
       } else if (ev.kind === "partial") {
-        setPartial(ev.text);
+        // (v0.15.2 C2 修) phase=polishing 时后端 stylist.rs 也 emit Partial
+        // event，但 MinimalPill 在 polishing 阶段渲染 polished 不读 partial —
+        // 结果 polish 流式中间文本永远看不到，pill 死等到 final transcript
+        // 才更新（最长 2-3s 黑盒）。这里按当前 phase 分流：recording 阶段
+        // partial 走 ASR 实时识别 channel；polishing 阶段同份 partial 同步进
+        // polished state 让 pill 真的渲染流式润色。
+        const phaseAtEvent = prevPhaseRef.current;
+        if (phaseAtEvent === "polishing" || phaseAtEvent === "inserting") {
+          setPolished(ev.text);
+        } else {
+          setPartial(ev.text);
+        }
       } else if (ev.kind === "transcript") {
         setFinalText(ev.text);
         setPartial(""); // ASR-final 到达后 partial 已被并入 final

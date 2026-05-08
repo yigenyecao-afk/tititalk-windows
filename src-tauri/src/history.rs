@@ -27,6 +27,18 @@ pub struct HistoryItem {
     /// ASR 模型，可选；老条目可能没有。
     #[serde(default)]
     pub model: Option<String>,
+    /// (v0.15.2 C1) 润色后文本 — 跟 Mac HistoryItem.polished 对齐。空 = 没润色。
+    /// 老条目（v0.15.0 之前）没此字段，反序列化拿空字符串 OK。
+    #[serde(default)]
+    pub polished: String,
+    /// (v0.15.2 C1) 录音时长毫秒 — 工作台显示「12 分 30 秒」用，也用来判断是否
+    /// 长录音卡（≥60_000 OR text.len ≥200）。老条目 = None。
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// (v0.15.2 C1) 缓存的 LLM 分析结果 — 工作台「重新生成」缓存，避免重扣 token。
+    /// 键：summary / chapters / actions。值：text 内容（多行 \n 分隔）。老条目 = None。
+    #[serde(default)]
+    pub analysis_reports: Option<std::collections::HashMap<String, String>>,
 }
 
 pub fn history_path() -> PathBuf {

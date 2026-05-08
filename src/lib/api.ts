@@ -36,6 +36,19 @@ export interface PersistedHistoryItem {
   text: string;
   engine: string;      // "tititalk_cloud" / "qwen" / "openai"
   model: string | null;
+  // (v0.15.2 C1) 跟 Mac HistoryItem 字段对齐 — 长录音工作台需要。老条目反序列化
+  // 拿默认值（polished="", duration_ms=null, analysis_reports=null），向后兼容。
+  polished?: string;
+  duration_ms?: number | null;
+  analysis_reports?: Record<string, string> | null;
+}
+
+/// (v0.15.2 C1) 长录音判定 — 跟 Mac HistoryItem.isLongRecording 对齐。
+/// ≥60s 或 ≥200 字 自动归长录音卡视图。
+export function isLongRecording(item: PersistedHistoryItem): boolean {
+  if ((item.duration_ms ?? 0) >= 60_000) return true;
+  if ((item.text ?? "").length >= 200) return true;
+  return false;
 }
 
 export async function getHistoryRecent(limit = 50): Promise<PersistedHistoryItem[]> {
