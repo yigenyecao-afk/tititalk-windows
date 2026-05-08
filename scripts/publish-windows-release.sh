@@ -209,19 +209,11 @@ fi
 
 echo ""
 echo "==> Push EXE to GitHub Release v$VERSION (mirror repo)"
-# MAC_VERSION 必须传 — sync-mirror 用它当 release tag。Win-only 发版时
-# 沿用上一次 Mac 发版的 tag（不创建新 v0.14.0 的 Mac-less tag）。
-if [[ -z "${MAC_VERSION:-}" ]]; then
-    # Win 单独发版时，沿用 mirror repo 当前 latest release tag
-    MAC_VERSION="$(gh release list --repo $MIRROR_REPO --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null | sed 's/^v//')"
-    if [[ -z "$MAC_VERSION" ]]; then
-        echo "❌ 无法从 mirror repo 探测到 release tag，必须显式传 MAC_VERSION=<x.y.z>"
-        exit 1
-    fi
-    echo "   (沿用 mirror 现有 tag v$MAC_VERSION — 没有 Mac 同步发版)"
-fi
-MAC_VERSION="$MAC_VERSION" bash "$SYNC_MIRROR" "" "$LOCAL_EXE" "" || {
+# (v0.14.0) Mac 跟 Win 版本号不同步 — Win 用自己的 v$VERSION mirror release tag
+# （不复用 Mac 的 tag），跟 GHA windows-update.json 里的 url 路径一致。
+# MIRROR_TAG 显式传给 sync-mirror，覆盖默认的 MAC_VERSION 推断。
+MIRROR_TAG="v$VERSION" WIN_VERSION="$VERSION" bash "$SYNC_MIRROR" "" "$LOCAL_EXE" "" || {
     echo "   ❌ EXE 没传上 GH Release — Tauri updater 自动更新会拉不到 binary！"
-    echo "   手动跑：MAC_VERSION=$MAC_VERSION bash $SYNC_MIRROR \"\" $LOCAL_EXE"
+    echo "   手动跑：MIRROR_TAG=v$VERSION WIN_VERSION=$VERSION bash $SYNC_MIRROR \"\" $LOCAL_EXE"
     exit 1
 }
