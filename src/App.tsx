@@ -26,7 +26,6 @@ import ConflictDialog from "./components/ConflictDialog";
 import SettingsSheet from "./components/SettingsSheet";
 import AccountSheet from "./components/AccountSheet";
 import OnboardingRoleSheet from "./components/OnboardingRoleSheet";
-import Onboarding from "./components/Onboarding";
 // P0 wave 3 components
 import { PersonalizationCard } from "./components/PersonalizationCard";
 import { CrossSearchSheet } from "./components/CrossSearchSheet";
@@ -287,19 +286,10 @@ export default function App() {
     );
   }
 
-  // (v0.13.4) Onboarding 30 秒 magical moment —— 首次启动 / 老用户升级第一次
-  // 进入此版本时蒙层全屏。完成后写 cfg.onboarding_completed=true 持久化。
-  const showOnboarding = cfg && !cfg.onboarding_completed;
-  const hotkeyLabel = useMemo(() => {
-    if (!cfg) return "F1";
-    return VK_CHOICES.find((c) => c.vk === cfg.hotkey_vk)?.label ?? "F1";
-  }, [cfg]);
+  // (v0.14.1) onboarding 30 秒 magical moment 整套砍 — 用户主动要求删除。
 
   return (
     <div className="min-h-screen flex flex-col">
-      {showOnboarding && cfg && (
-        <Onboarding cfg={cfg} onConfigUpdate={setCfg} hotkeyLabel={hotkeyLabel} />
-      )}
       <UpdateBanner status={update} setStatus={setUpdate} />
       {upgrade && <UpgradeBanner reason={upgrade} onDismiss={() => setUpgrade(null)} />}
       {/* P0 wave 3 #12 — 会议探针顶部 banner */}

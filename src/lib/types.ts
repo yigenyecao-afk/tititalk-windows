@@ -4,6 +4,7 @@ export interface AppConfig {
   engine: Engine;
   api_key: string;
   model: string;
+  /// (v0.14.1) language 字段保留兼容已发布 cfg.json，新 UI 不再读写，恒定 "auto"。
   language: string;
   auto_insert: boolean;
   hotkey_vk: number;
@@ -61,8 +62,7 @@ export interface AppConfig {
   pill_enabled: boolean;
   /// (P2-30 隐私) 前台 app 上下文遥测 opt-out。默认 ON 跟旧行为兼容。
   telemetry_app_context_enabled: boolean;
-  /// (v0.13.4 Onboarding) 首次启动 30 秒 magical moment 是否走完。false 时
-  /// App.tsx 渲染 <Onboarding /> 全屏蒙层；用户做完一次完整录音自动置 true。
+  /// (v0.14.1) onboarding_completed 字段保留兼容老 cfg.json，新 UI 不再读写。
   onboarding_completed: boolean;
 }
 

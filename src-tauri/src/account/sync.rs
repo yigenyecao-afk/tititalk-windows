@@ -454,7 +454,7 @@ pub fn snapshot_from_config_with_overlay(
     m.insert("version_schema".into(), json!(SCHEMA_VERSION));
     m.insert("dictionaries".into(), json!(cfg.dictionary));
     m.insert("default_engine".into(), json!(cfg.engine));
-    m.insert("default_language".into(), json!(cfg.language));
+    // (v0.14.1) default_language 砍 — 客户端识别语言 picker 已删，恒定 "auto"。
     m.insert("default_stylist".into(), json!(cfg.stylist_persona));
     // (v0.13.4 sync 瘦身) 只剩 hotkey_mode —— 其它 device-local prefs 不跨端。
     // 显式列出本端已知的同步字段；overlay 时未列出的 cloud 字段（如 mac 的
@@ -493,9 +493,7 @@ pub fn apply_cloud_to_config(cloud: &Map<String, Value>, cfg: &mut AppConfig) {
     if let Some(s) = cloud.get("default_engine").and_then(|v| v.as_str()) {
         cfg.engine = s.to_string();
     }
-    if let Some(s) = cloud.get("default_language").and_then(|v| v.as_str()) {
-        cfg.language = s.to_string();
-    }
+    // (v0.14.1) default_language 不再 ingest — 字段保留兼容，恒定 "auto"。
     if let Some(s) = cloud.get("default_stylist").and_then(|v| v.as_str()) {
         cfg.stylist_persona = s.to_string();
     }

@@ -192,9 +192,7 @@ export default function SettingsSheet({
                 </select>
               }
             />
-            {/* (v0.8.5 第三轮 Cut#6) 「语言」picker 挪到高级 disclosure ——
-                默认 auto 即最优；改成单语反而漏识别。@field draft.language
-                留生效，下方高级里仍可调。 */}
+            {/* (v0.14.1) 识别语言 picker 整套砍 — 选项一直空白，恒定 auto。 */}
           </TypelessCard>
           {!proUnlocked && (
             <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
@@ -614,27 +612,8 @@ export default function SettingsSheet({
 
           {advanced && (
             <div className="mt-3 space-y-4">
-              {/* (v0.8.5 第三轮 Cut#6) 语言 picker 挪入高级——日常 auto 即最优 */}
-              <TypelessCard>
-                <TypelessRow
-                  iconNode={<Icon name="globe" />}
-                  title="识别语言"
-                  subtitle="默认自动适合中英混说；改单语在外文比例高时偶尔提升识别率"
-                  trailing={
-                    <select
-                      className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
-                      value={draft.language}
-                      onChange={(e) => patch("language", e.target.value)}
-                    >
-                      <option value="auto">自动</option>
-                      <option value="zh">中文</option>
-                      <option value="en">英文</option>
-                      <option value="yue">粤语</option>
-                      <option value="yue_zh">粤+普</option>
-                    </select>
-                  }
-                />
-              </TypelessCard>
+              {/* (v0.14.1) 识别语言 picker 砍 — 选项一直空白多次返工没修好，
+                  用户明确表示不要。auto 兜底；粤语 / 方言后续走自定义词典。 */}
 
               {/* (v0.13.2) 识别模型自定义砍 — BYOK 用户走默认 model 即可
                   （qwen3-asr-flash / whisper-1）；power user 改 cfg.json 也能。 */}
@@ -855,7 +834,7 @@ const DOUBLE_MOD_KEYS = new Set(["", "shift", "cmd", "opt", "ctrl"]);
 const MOUSE_SIDE_BTNS = new Set([0, 1, 2]);
 const PET_SLUGS = new Set(["boba", "byte-bunny", "mochi-cat", "buddy-corgi", "panda-baba"]);
 const CHATTINESS_VALUES = new Set([0, 1, 2, 3]);
-const LANGUAGES = new Set(["auto", "zh", "en", "yue", "yue_zh"]);
+// (v0.14.1) LANGUAGES 砍 — 识别语言 picker 已删，恒定 "auto"。
 const OUTPUT_LANG_OVERRIDES = new Set(["", "中文", "English", "日本語", "한국어", "粤语"]);
 
 function normalizeConfigValues(cfg: AppConfig): AppConfig {
@@ -873,7 +852,8 @@ function normalizeConfigValues(cfg: AppConfig): AppConfig {
     companion_chattiness: CHATTINESS_VALUES.has(cfg.companion_chattiness)
       ? cfg.companion_chattiness
       : 2,
-    language: LANGUAGES.has(cfg.language) ? cfg.language : "auto",
+    // (v0.14.1) language 恒定 "auto" — picker 已砍。
+    language: "auto",
     output_language_override: OUTPUT_LANG_OVERRIDES.has(cfg.output_language_override)
       ? cfg.output_language_override
       : "",
@@ -953,7 +933,7 @@ function advancedBadges(draft: AppConfig): string[] {
   if (draft.model && draft.model.trim().length > 0) out.push(`识别模型 ${shortModel(draft.model)}`);
   if (draft.stylist_model && draft.stylist_model.trim().length > 0) out.push(`整理模型 ${shortModel(draft.stylist_model)}`);
   if (draft.polish_intensity && draft.polish_intensity !== "normal") out.push(`整理 ${draft.polish_intensity === "light" ? "轻" : "重"}`);
-  if (draft.language && draft.language !== "auto") out.push(`语言 ${draft.language === "zh" ? "中文" : "英文"}`);
+  // (v0.14.1) 识别语言徽章砍 — 字段恒定 "auto" 没必要展示。
   return out;
 }
 

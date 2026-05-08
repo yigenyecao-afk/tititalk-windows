@@ -181,7 +181,8 @@ async fn qwen_transcribe(cfg: &AppConfig, audio: &CapturedAudio) -> anyhow::Resu
                 Some(&cfg.dictionary)
             },
         },
-        parameters: QwenParameters { language: &cfg.language },
+        // (v0.14.1) 识别语言 picker 砍后恒定 "auto"。
+        parameters: QwenParameters { language: "auto" },
     };
 
     let resp = HTTP.clone()
@@ -340,9 +341,7 @@ async fn openai_transcribe(cfg: &AppConfig, audio: &CapturedAudio) -> anyhow::Re
         .text("model", cfg.model.clone())
         .text("response_format", "json")
         .part("file", part);
-    if cfg.language != "auto" {
-        form = form.text("language", cfg.language.clone());
-    }
+    // (v0.14.1) 识别语言 picker 砍后恒定 "auto"，不再透传到 OpenAI 端。
     if !cfg.dictionary.is_empty() {
         form = form.text("prompt", cfg.dictionary.join(", "));
     }
