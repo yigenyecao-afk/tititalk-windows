@@ -8,7 +8,8 @@ mod asr_stream;
 mod assistant;
 mod audio;
 mod batch_transcribe;
-// (v0.13.4 返璞归真) companion mod 砍 — 整套桌面宠物下线
+// Wave 4 — 桌面伴侣（v0.13.4 砍后 v0.16 重新引入，跟 Mac Companion 等价）
+mod companion;
 mod config;
 mod history;
 mod hotkey;
@@ -179,7 +180,13 @@ pub fn run() {
             batch_transcribe::cmd_transcribe_file,
             rewrite_selection::cmd_get_clipboard_text,
             rewrite_selection::cmd_rewrite_selection_start,
-            // (v0.13.4 返璞归真) Wave 4 桌面宠物 commands 砍
+            // Wave 4 桌面伴侣（cmd_companion_*）— tauri::generate_handler!
+            // 宏要找 __tauri_command_name_X 跟 fn 定义同模块；re-export 不行。
+            companion::window::cmd_companion_list_pets,
+            companion::window::cmd_companion_tap,
+            companion::window::cmd_companion_double_tap,
+            companion::window::cmd_companion_drag_end,
+            companion::window::cmd_companion_save_position,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -208,8 +215,14 @@ pub fn run() {
             if let Some(pill) = app.get_webview_window("pill") {
                 let _ = pill.hide();
             }
-            // (v0.13.4 返璞归真) Wave 4 桌面宠物 webview 砍 — tauri.conf.json
-            // 已移除 companion window 定义
+            // Wave 4 — 桌面伴侣初始化（按 cfg.companion_enabled 决定是否 show）
+            {
+                let h2 = handle.clone();
+                let s2 = app_state.clone();
+                tauri::async_runtime::spawn(async move {
+                    companion::window::ensure(&h2, &s2).await;
+                });
+            }
 
             // Show main window on first launch + every cold start. The window
             // is `visible:false` in tauri.conf.json so it doesn't flash before
@@ -327,6 +340,7 @@ pub fn run() {
                     log::debug!("pipeline event: {:?}", ev);
                     let _ = pump_handle.emit("pipeline", &ev);
                     pill::on_pipeline_event(&pump_handle, &pump_state, &ev).await;
+                    companion::window::on_pipeline_event(&pump_handle, &pump_state, &ev).await;
                     // tray tooltip 联动 phase —— 录音中/转写中/空闲在 tray hover
                     // 看得见，比静态 tooltip 强很多（pill 默认关时尤其重要）。
                     if let PipelineEvent::Phase { phase } = &ev {

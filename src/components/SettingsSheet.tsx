@@ -14,6 +14,7 @@ import {
 } from "@tauri-apps/plugin-autostart";
 import type { AppConfig, PillTheme } from "../lib/types";
 // (v0.13.4) migrateLegacyPillTheme 仍 export from PillApp 但本文件不再用
+import { listPets, type PetEntry } from "../lib/companion-api";
 import TypelessSheet from "./TypelessSheet";
 import {
   TypelessCard,
@@ -114,6 +115,15 @@ export default function SettingsSheet({
     };
     window.addEventListener("titi:config-changed", handler);
     return () => window.removeEventListener("titi:config-changed", handler);
+  }, []);
+
+  // Wave 4 — 桌面伴侣：拉一次宠物列表给 picker 用。
+  // listPets 走 Rust catalog::discover()，扫 bundle/<resource>/pets/ + ~/.codex/pets/。
+  const [pets, setPets] = useState<PetEntry[]>([]);
+  useEffect(() => {
+    listPets()
+      .then(setPets)
+      .catch((e) => console.warn("companion: listPets failed", e));
   }, []);
 
   function patch<K extends keyof AppConfig>(k: K, v: AppConfig[K]) {
@@ -575,9 +585,53 @@ export default function SettingsSheet({
           </TypelessCard>
         </section>
 
-        {/* (v0.13.4 返璞归真) Wave 4 桌面宠物整套砍 — 用户反馈「同样垃圾体验」。
-            companion_enabled / companion_pet_slug / companion_chattiness 字段保留
-            兼容老 cfg.json + 云端 sync，但 sheet 不再渲染 picker。 */}
+        {/* 桌面伴侣（Wave 4 重新引入，跟 Mac Companion 等价）*/}
+        <section>
+          <TypelessSectionHeader title="桌面伴侣" subtitle="一只小宠物在屏幕角落陪你工作" />
+          <TypelessCard>
+            <TypelessRow
+              iconNode={<Icon name="bell" />}
+              iconColor="#EC4899"
+              title="启用桌面伴侣"
+              subtitle="录音时站定让位，闲时屏幕底部巡游"
+              trailing={
+                <Switch
+                  checked={draft.companion_enabled}
+                  onChange={(v) => patch("companion_enabled", v)}
+                />
+              }
+            />
+            {draft.companion_enabled && (
+              <TypelessRow
+                iconNode={<Icon name="key" />}
+                iconColor="#EC4899"
+                title="选择宠物"
+                subtitle={
+                  pets.length === 0
+                    ? "正在加载…（如长期为空，重装应用恢复内置）"
+                    : `当前 ${pets.find((p) => p.slug === draft.companion_pet_slug)?.display_name ?? draft.companion_pet_slug}`
+                }
+                trailing={
+                  <select
+                    value={draft.companion_pet_slug}
+                    onChange={(e) => patch("companion_pet_slug", e.target.value)}
+                    className="border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+                  >
+                    {pets.length === 0 && (
+                      <option value={draft.companion_pet_slug}>{draft.companion_pet_slug}</option>
+                    )}
+                    {pets.map((p) => (
+                      <option key={p.slug} value={p.slug}>
+                        {p.display_name}
+                        {p.is_bundled ? "" : "（自装）"}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+            )}
+          </TypelessCard>
+        </section>
 
         {/* 高级 disclosure */}
         <section>
@@ -832,7 +886,7 @@ const PERSONAS = new Set(["friendly", "formal", "mixed_zh_en", "code"]);
 const POLISH_INTENSITIES = new Set(["light", "normal", "heavy"]);
 const DOUBLE_MOD_KEYS = new Set(["", "shift", "cmd", "opt", "ctrl"]);
 const MOUSE_SIDE_BTNS = new Set([0, 1, 2]);
-const PET_SLUGS = new Set(["boba", "byte-bunny", "mochi-cat", "buddy-corgi", "panda-baba"]);
+const PET_SLUGS = new Set(["boba", "byte-bunny", "pixel-panda", "lulu-capybara", "aka-shiba"]);
 const CHATTINESS_VALUES = new Set([0, 1, 2, 3]);
 // (v0.14.1) LANGUAGES 砍 — 识别语言 picker 已删，恒定 "auto"。
 const OUTPUT_LANG_OVERRIDES = new Set(["", "中文", "English", "日本語", "한국어", "粤语"]);

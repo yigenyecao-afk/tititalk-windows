@@ -1,9 +1,10 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
   "bundle": {
-    "resources": {
-      "resources/sherpa-models/sense-voice/model.int8.onnx": "sherpa-models/sense-voice/model.int8.onnx",
-      "resources/sherpa-models/sense-voice/tokens.txt": "sherpa-models/sense-voice/tokens.txt"
-    }
+    "resources": [
+      "pets/**/*",
+      "resources/sherpa-models/sense-voice/model.int8.onnx",
+      "resources/sherpa-models/sense-voice/tokens.txt"
+    ]
   }
 }

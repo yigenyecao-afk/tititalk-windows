@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TiTiTalk",
-  "version": "0.15.3",
+  "version": "0.16.0",
   "identifier": "com.tititalk.windows",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -55,10 +55,32 @@
         "focus": true,
         "visible": false,
         "center": true
+      },
+      {
+        "label": "companion",
+        "title": "TiTiTalk Companion",
+        "url": "companion.html",
+        "width": 96,
+        "height": 104,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false,
+        "shadow": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$RESOURCE/pets/**",
+          "$HOME/.codex/pets/**"
+        ]
+      }
     }
   },
   "bundle": {
@@ -67,6 +89,9 @@
       "nsis"
     ],
     "createUpdaterArtifacts": true,
+    "resources": [
+      "pets/**/*"
+    ],
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"
