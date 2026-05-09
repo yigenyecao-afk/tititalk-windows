@@ -4,6 +4,7 @@ import {
   doubleTap,
   dragEnd,
   listPets,
+  longPress,
   onCompanionState,
   savePosition,
   tap,
@@ -145,6 +146,7 @@ export default function CompanionApp() {
         spriteUrl={spriteUrl}
         onTap={() => void tap()}
         onDoubleTap={() => void doubleTap()}
+        onLongPress={() => void longPress()}
         onDragStart={onDragStart}
       />
     </div>

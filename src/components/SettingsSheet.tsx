@@ -630,6 +630,55 @@ export default function SettingsSheet({
                 }
               />
             )}
+            {/* (v1.1 性格化陪伴) 让伴侣说话总开关 + 频率 picker */}
+            {draft.companion_enabled && (
+              <TypelessRow
+                iconNode={<Icon name="bell" />}
+                iconColor="#EC4899"
+                title="让伴侣说话"
+                subtitle="性格化文案气泡：录音前后、闲时碎碎念、抚摸时反应"
+                trailing={
+                  <Switch
+                    checked={draft.companion_voice_enabled}
+                    onChange={(v) => patch("companion_voice_enabled", v)}
+                  />
+                }
+              />
+            )}
+            {draft.companion_enabled && draft.companion_voice_enabled && (
+              <TypelessRow
+                iconNode={<Icon name="info" />}
+                iconColor="#EC4899"
+                title="聊天频率"
+                subtitle="少 = 8-15 分钟一次 · 中 = 3-8 分钟 · 多 = 1-3 分钟"
+                trailing={
+                  <div className="inline-flex rounded-md border border-ink-300 overflow-hidden bg-white">
+                    {[
+                      { v: 1, label: "少" },
+                      { v: 2, label: "中" },
+                      { v: 3, label: "多" },
+                    ].map((opt) => {
+                      const active = draft.companion_chattiness === opt.v;
+                      return (
+                        <button
+                          key={opt.v}
+                          type="button"
+                          className={
+                            "px-3 py-1 text-xs " +
+                            (active
+                              ? "bg-ink-900 text-white"
+                              : "text-ink-700 hover:bg-ink-100")
+                          }
+                          onClick={() => patch("companion_chattiness", opt.v as 1 | 2 | 3)}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                }
+              />
+            )}
           </TypelessCard>
         </section>
 

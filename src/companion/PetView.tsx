@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { PipelinePhase } from "../lib/types";
 import type { CompanionState } from "../lib/companion-api";
+import { PetSpeechBubble } from "./PetSpeechBubble";
 
 /// 单帧 192×208 → 渲染 64×69.3，跟 Mac PetView 同比例。
 const FRAME_W = 192;
@@ -9,7 +11,11 @@ const RENDER_W = 64;
 const RENDER_H = 64 * (FRAME_H / FRAME_W); // ≈ 69.3
 const SHEET_COLS = 8;
 const SHEET_ROWS = 9;
-const SCALE = RENDER_W / FRAME_W; // 缩放因子，用 background-size 一并放大整张 sheet
+
+/// (v1.1) panel 尺寸——跟 tauri.conf.json + Rust PANEL_W/H 同步。
+const PANEL_W = 144;
+const PANEL_H = 140;
+const BUBBLE_MAX_W = 130;
 
 /// 9 行状态固定语义（跟 Mac PetSheet.State 一一对应）。
 type State =
@@ -90,12 +96,17 @@ function mapState(companion: CompanionState, phase: PipelinePhase): State {
 
 /// 64×69 sprite 渲染。background-image 整张 sheet + background-position 切帧。
 /// 切片不动 DOM、不解码，纯 GPU compositing；30fps 步帧只调 setState 更新 style。
+///
+/// (v1.1) panel 改 144×140：上方气泡区 + 下方 sprite 居中。
+/// idle 状态走 hold cycle（静止 6-12s + 1.1s 完整 6 帧）；深夜 1-5 点 25%
+/// 概率切 jumping row[0] 0.6s 当哈欠。
 export function PetView({
   companion,
   phase,
   spriteUrl,
   onTap,
   onDoubleTap,
+  onLongPress,
   onDragStart,
 }: {
   companion: CompanionState;
@@ -103,26 +114,122 @@ export function PetView({
   spriteUrl: string;
   onTap: () => void;
   onDoubleTap: () => void;
+  onLongPress: () => void;
   onDragStart: (e: React.MouseEvent) => void;
 }) {
   const state = mapState(companion, phase);
   const [frame, setFrame] = useState(0);
+  const [showYawn, setShowYawn] = useState(false);
   const stateRef = useRef<State>(state);
 
-  // 状态变 → 重置帧 + 启动新 timer
+  // 性格化文案气泡 ----------------------------------------------------
+  const [bubbleText, setBubbleText] = useState<string | null>(null);
+  useEffect(() => {
+    let un: UnlistenFn | null = null;
+    let alive = true;
+    listen<{ text: string | null; dwell_ms: number }>("companion-speech", (e) => {
+      if (!alive) return;
+      const { text } = e.payload;
+      setBubbleText(text && text.length > 0 ? text : null);
+    }).then((fn) => {
+      if (alive) un = fn;
+      else fn();
+    });
+    return () => {
+      alive = false;
+      if (un) un();
+    };
+  }, []);
+
+  // 状态变 → 重置帧 + 重启 timer ---------------------------------------
   useEffect(() => {
     if (stateRef.current === state) return;
     stateRef.current = state;
     setFrame(0);
+    setShowYawn(false);
   }, [state]);
 
+  // sprite 帧动画。idle 用 hold cycle；其它状态连续循环。
+  // (v1.1) hold cycle: 静止 6-12s 后跑一次完整 6 帧；25% 深夜哈欠分支
   useEffect(() => {
-    const total = FRAMES_OF[state];
-    const interval = DURATION_MS_OF[state] / total;
-    const id = window.setInterval(() => {
-      setFrame((f) => (f + 1) % total);
-    }, interval);
-    return () => window.clearInterval(id);
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    let intervalId: number | null = null;
+
+    const clearAll = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    if (state !== "idle") {
+      // 连续循环
+      const total = FRAMES_OF[state];
+      const interval = DURATION_MS_OF[state] / total;
+      intervalId = window.setInterval(() => {
+        if (cancelled) return;
+        setFrame((f) => (f + 1) % total);
+      }, interval);
+    } else {
+      // hold cycle: 静止 6-12s 后偶尔动一下
+      const startHold = () => {
+        if (cancelled) return;
+        const holdSec = 6 + Math.random() * 6; // 6..12
+        timeoutId = window.setTimeout(() => {
+          if (cancelled) return;
+          // 25% 深夜哈欠（凌晨 1-5 点）
+          const h = new Date().getHours();
+          if (h >= 1 && h < 5 && Math.random() < 0.25) {
+            playYawn();
+          } else {
+            playIdleFrames();
+          }
+        }, holdSec * 1000);
+      };
+
+      const playYawn = () => {
+        setShowYawn(true);
+        timeoutId = window.setTimeout(() => {
+          if (cancelled) return;
+          setShowYawn(false);
+          setFrame(0);
+          startHold();
+        }, 600);
+      };
+
+      const playIdleFrames = () => {
+        const total = FRAMES_OF.idle;
+        const interval = DURATION_MS_OF.idle / total;
+        let f = 1;
+        setFrame(f);
+        intervalId = window.setInterval(() => {
+          if (cancelled) return;
+          if (f >= total - 1) {
+            window.clearInterval(intervalId!);
+            intervalId = null;
+            setFrame(0);
+            startHold();
+          } else {
+            f += 1;
+            setFrame(f);
+          }
+        }, interval);
+      };
+
+      // 立即进入 hold
+      setFrame(0);
+      startHold();
+    }
+
+    return () => {
+      cancelled = true;
+      clearAll();
+    };
   }, [state]);
 
   const row = ROW_OF[state];
@@ -132,8 +239,10 @@ export function PetView({
   // 然后用 background-position 把目标帧挪到 (0,0) 显示。
   const bgW = RENDER_W * SHEET_COLS;
   const bgH = RENDER_H * SHEET_ROWS;
-  const offsetX = -safeFrame * RENDER_W;
-  const offsetY = -row * RENDER_H;
+  // (v1.1) 哈欠借用 jumping row[0]
+  const yawnRow = ROW_OF.jumping;
+  const offsetX = showYawn ? 0 : -safeFrame * RENDER_W;
+  const offsetY = -(showYawn ? yawnRow : row) * RENDER_H;
 
   // pill 显示中（stationary mood 下 phase 非 idle）→ 透明度降到 0.4
   const isPillActive =
@@ -144,47 +253,123 @@ export function PetView({
     phase !== "stopping";
   const opacity = isPillActive ? 0.4 : 1.0;
 
-  // 双击/单击区分：用 onClick + detail 计数；onMouseDown 启动可能的拖动
+  // ---------- 单击 / 双击 / 长按 / 拖动 区分 ----------
+  // 长按 ≥0.5s → onLongPress（抚摸），松手早 → tap 路径。
+  // 单击 vs 双击：250ms 内第二次按下算双击。
+  // 拖动：mousedown 后立即注册 move listener；如果累计 delta > 4px 标记为拖动，
+  //       松开时不走 tap/long-press。
+  //
+  // 注意：拖动跟 long-press 互斥——按住不动 0.5s 算抚摸；按住有 delta 算拖。
+  //       250ms tap-detector 跟 mousedown 流程独立，互不干扰。
+  const longPressTimer = useRef<number | null>(null);
   const clickTimer = useRef<number | null>(null);
-  const handleClick = (e: React.MouseEvent) => {
-    if (e.detail === 2) {
-      if (clickTimer.current) {
-        window.clearTimeout(clickTimer.current);
-        clickTimer.current = null;
-      }
-      onDoubleTap();
-      return;
-    }
-    if (e.detail === 1) {
-      // 250ms 内没第二次点击就当 single tap
-      if (clickTimer.current) window.clearTimeout(clickTimer.current);
-      clickTimer.current = window.setTimeout(() => {
-        clickTimer.current = null;
-        onTap();
-      }, 250);
+  const dragInfo = useRef<{ startX: number; startY: number; moved: boolean }>({
+    startX: 0,
+    startY: 0,
+    moved: false,
+  });
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current !== null) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
     }
   };
 
-  const _ = SCALE; // 留 ref 防 lint 嫌没用（SCALE 是文档说明的语义常量）
-  void _;
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragInfo.current = { startX: e.screenX, startY: e.screenY, moved: false };
+    // 启动 long-press timer（0.5s 触发抚摸；如果期间检测到拖动会取消）
+    cancelLongPress();
+    longPressTimer.current = window.setTimeout(() => {
+      longPressTimer.current = null;
+      // 仅在没拖动时触发 long-press
+      if (!dragInfo.current.moved) {
+        onLongPress();
+        // 标记 moved=true 让 mouseup 知道这次不走 tap
+        dragInfo.current.moved = true;
+      }
+    }, 500);
+
+    // 把拖动事件交给父组件——父组件管 outerPosition 计算 + cmd_companion_save_position
+    onDragStart(e);
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.screenX - dragInfo.current.startX;
+      const dy = ev.screenY - dragInfo.current.startY;
+      if (!dragInfo.current.moved && Math.hypot(dx, dy) > 4) {
+        dragInfo.current.moved = true;
+        cancelLongPress();
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      cancelLongPress();
+      // 如果没拖、没触发 long-press → 走 tap detector
+      if (!dragInfo.current.moved) {
+        // 250ms 内若没第二次 mousedown 就当 single tap
+        if (clickTimer.current !== null) {
+          window.clearTimeout(clickTimer.current);
+          clickTimer.current = null;
+          onDoubleTap();
+        } else {
+          clickTimer.current = window.setTimeout(() => {
+            clickTimer.current = null;
+            onTap();
+          }, 250);
+        }
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   return (
     <div
       style={{
-        width: RENDER_W,
-        height: RENDER_H,
-        backgroundImage: `url("${spriteUrl}")`,
-        backgroundSize: `${bgW}px ${bgH}px`,
-        backgroundPosition: `${offsetX}px ${offsetY}px`,
-        backgroundRepeat: "no-repeat",
-        imageRendering: "auto",
-        opacity,
-        transition: "opacity 0.25s ease-in-out",
-        cursor: "grab",
+        width: PANEL_W,
+        height: PANEL_H,
+        position: "relative",
+        background: "transparent",
       }}
-      onClick={handleClick}
-      onMouseDown={onDragStart}
-      title="单击招手 · 双击切换巡游 · 拖动换位置"
-    />
+    >
+      {/* 上方：气泡区（hit-test 关掉，不挡 sprite 点击） */}
+      <div
+        style={{
+          position: "absolute",
+          top: 4,
+          left: 0,
+          right: 0,
+          display: "flex",
+          justifyContent: "center",
+          pointerEvents: "none",
+        }}
+      >
+        <PetSpeechBubble text={bubbleText} maxWidth={BUBBLE_MAX_W} />
+      </div>
+
+      {/* 底部：sprite 居中 */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: 4,
+          left: (PANEL_W - RENDER_W) / 2,
+          width: RENDER_W,
+          height: RENDER_H,
+          backgroundImage: `url("${spriteUrl}")`,
+          backgroundSize: `${bgW}px ${bgH}px`,
+          backgroundPosition: `${offsetX}px ${offsetY}px`,
+          backgroundRepeat: "no-repeat",
+          imageRendering: "auto",
+          opacity,
+          transition: "opacity 0.25s ease-in-out",
+          cursor: "grab",
+        }}
+        onMouseDown={handleMouseDown}
+        title="单击招手 · 双击切换巡游 · 长按抚摸 · 拖动换位置"
+      />
+    </div>
   );
 }

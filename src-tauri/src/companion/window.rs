@@ -29,12 +29,22 @@ use tokio::sync::OnceCell;
 use crate::state::{AppState, PipelineEvent, PipelinePhase};
 
 use super::catalog::{self, PetEntry};
+use super::personality::Scene;
+use super::speech::SpeechController;
 use super::state::{CompanionSnapshot, CompanionState, Facing, Mood};
 
-/// 单帧逻辑尺寸（CSS px）。Mac NSPanel 64×69；Win webview 留点 padding 防 alwaysOnTop
-/// 边缘子像素抖（96×104 = 1.5×64）。前端 PetView 精确画 64×69 居中。
-const PANEL_W: f64 = 96.0;
-const PANEL_H: f64 = 104.0;
+/// (v1.1 性格化陪伴) panel 尺寸 — Mac PetWindowController.panelSize 144×140 的
+/// Win 等价。气泡区在上方 ~70px，sprite 64×69 居中下方。撞墙判断按 panel
+/// 边缘（视觉上 sprite 离屏边 ~40px 转身——可接受 trade-off）。
+const PANEL_W: f64 = 144.0;
+const PANEL_H: f64 = 140.0;
+
+/// (v1.1) 鼠标"看着" 半径阈值（逻辑像素）—— 鼠标进入半径内时切 facing 朝向鼠标。
+const MOUSE_LOOK_RADIUS: f64 = 200.0;
+/// (v1.1) 鼠标 watcher tick 间隔——节流到 100ms / ~10fps，CPU 几乎 0。
+const MOUSE_WATCH_TICK_MS: u64 = 100;
+/// (v1.1) 鼠标离开 1s 后回 baseline（防抖）
+const MOUSE_AWAY_RESUME_MS: u64 = 1000;
 
 /// 巡游速度 px/s（同 Mac 36，Mac NSPoint 是逻辑点 = Win logical px 等价）
 const WANDER_SPEED: f64 = 36.0;
@@ -47,6 +57,8 @@ const RESUME_WANDER_DELAY_MS: u64 = 1200;
 
 /// 单例 —— ensure 只跑一次（多次 setup 调或 hot-reload 时复用同一份 state）。
 static COMPANION_STATE: OnceCell<Arc<CompanionState>> = OnceCell::const_new();
+/// (v1.1) 性格化文案 controller 单例。同 COMPANION_STATE 全局唯一。
+static SPEECH_CTRL: OnceCell<Arc<SpeechController>> = OnceCell::const_new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct PersistedOrigin {
@@ -95,6 +107,24 @@ pub async fn ensure(handle: &AppHandle, app_state: &Arc<AppState>) {
     // 30fps wander tick——永远跑（mood != Wandering 时早 return），
     // 避免 toggle 时反复 spawn task 互相 race。
     spawn_wander_tick(handle.clone(), app_state.clone(), companion.clone());
+
+    // (v1.1 性格化陪伴) 创建 SpeechController + 启动 idle tick；
+    // 多次 ensure 调用幂等（OnceCell::set 已 init 过会失败，复用旧实例）。
+    let speech = SpeechController::new(handle.clone(), app_state.clone());
+    let _ = SPEECH_CTRL.set(speech.clone());
+
+    // (v1.1) 30fps 鼠标 watcher —— 鼠标进入 panel 200px 半径时 emit
+    // companion-facing 给前端切朝向；离开 1s 后 emit companion-baseline。
+    spawn_mouse_watcher(handle.clone(), app_state.clone(), companion.clone());
+
+    // (v1.1) 5s 应用感知 watcher —— 前台 .exe 变化时通知 speech
+    #[cfg(windows)]
+    {
+        let watcher = super::app_watcher::AppWatcher::new();
+        watcher.start(speech.clone());
+        // watcher 内部 spawn 自管，drop 即可
+        std::mem::forget(watcher);
+    }
 
     // 推一次初始 snapshot 给前端（前端可能挂载早于 ensure 调用）
     emit_state(handle, &companion);
@@ -253,19 +283,27 @@ pub async fn on_pipeline_event(
     };
 
     match ev {
-        PipelineEvent::Phase { phase } => match phase {
-            PipelinePhase::Recording
-            | PipelinePhase::Transcribing
-            | PipelinePhase::Polishing
-            | PipelinePhase::Inserting => {
-                companion.set(Mood::Stationary);
-                emit_state(handle, &companion);
+        PipelineEvent::Phase { phase } => {
+            match phase {
+                PipelinePhase::Recording
+                | PipelinePhase::Transcribing
+                | PipelinePhase::Polishing
+                | PipelinePhase::Inserting => {
+                    companion.set(Mood::Stationary);
+                    emit_state(handle, &companion);
+                }
+                PipelinePhase::Done | PipelinePhase::Failed | PipelinePhase::Idle => {
+                    schedule_resume_wander(handle.clone(), companion.clone());
+                }
+                _ => {}
             }
-            PipelinePhase::Done | PipelinePhase::Failed | PipelinePhase::Idle => {
-                schedule_resume_wander(handle.clone(), companion.clone());
+            // (v1.1) speech 边沿处理：on_phase 内部跟 last_phase 比对，
+            // recording/transcribing/polishing → done/idle 视作录音完成；
+            // 任意 → failed 视作录音失败。
+            if let Some(speech) = SPEECH_CTRL.get() {
+                speech.on_phase(*phase);
             }
-            _ => {}
-        },
+        }
         _ => {}
     }
 }
@@ -301,7 +339,7 @@ pub fn cmd_companion_list_pets(handle: AppHandle) -> Vec<PetEntry> {
     catalog::discover(&handle)
 }
 
-/// 单击 pet → wave 700ms，回 baseline。
+/// 单击 pet → wave 700ms，回 baseline。25% 概率附带说一句。
 #[tauri::command]
 pub fn cmd_companion_tap(handle: AppHandle, state: tauri::State<'_, Arc<AppState>>) {
     let Some(companion) = COMPANION_STATE.get().cloned() else {
@@ -310,11 +348,39 @@ pub fn cmd_companion_tap(handle: AppHandle, state: tauri::State<'_, Arc<AppState
     let fallback = baseline_mood(&state, &companion);
     companion.trigger(Mood::Wave, Duration::from_millis(WAVE_MS), fallback);
     emit_state(&handle, &companion);
+    // (v1.1) 25% 概率冒泡（克制；scene 内部 30s 节流再过滤一次）
+    if rand_unit() < 0.25 {
+        if let Some(speech) = SPEECH_CTRL.get() {
+            speech.notify(Scene::SingleTap);
+        }
+    }
     // duration 后 trigger 内部会 set + 我们这边再补一次 emit_state 让前端同步
     let h2 = handle.clone();
     let c2 = companion.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(WAVE_MS + 30)).await;
+        emit_state(&h2, &c2);
+    });
+}
+
+/// (v1.1) 长按 pet ≥0.5s → 抚摸；wave 1.5s + 70% 概率说"被摸了"。
+#[tauri::command]
+pub fn cmd_companion_long_press(handle: AppHandle, state: tauri::State<'_, Arc<AppState>>) {
+    let Some(companion) = COMPANION_STATE.get().cloned() else {
+        return;
+    };
+    let fallback = baseline_mood(&state, &companion);
+    companion.trigger(Mood::Wave, Duration::from_millis(1500), fallback);
+    emit_state(&handle, &companion);
+    if rand_unit() < 0.70 {
+        if let Some(speech) = SPEECH_CTRL.get() {
+            speech.notify(Scene::Petting);
+        }
+    }
+    let h2 = handle.clone();
+    let c2 = companion.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(1500 + 30)).await;
         emit_state(&h2, &c2);
     });
 }
@@ -339,9 +405,15 @@ pub fn cmd_companion_double_tap(handle: AppHandle, state: tauri::State<'_, Arc<A
         companion.set(next);
     }
     emit_state(&handle, &companion);
+    // (v1.1) 40% 概率冒泡
+    if rand_unit() < 0.40 {
+        if let Some(speech) = SPEECH_CTRL.get() {
+            speech.notify(Scene::DoubleTap);
+        }
+    }
 }
 
-/// 用户拖完一次 → 持久化新位置 + 暂停巡游 1.2s。
+/// 用户拖完一次 → 持久化新位置 + 暂停巡游 1.2s。25% 概率说一句。
 #[tauri::command]
 pub fn cmd_companion_drag_end(handle: AppHandle) {
     let Some(win) = handle.get_webview_window("companion") else {
@@ -353,6 +425,12 @@ pub fn cmd_companion_drag_end(handle: AppHandle) {
     let Some(companion) = COMPANION_STATE.get().cloned() else {
         return;
     };
+    // (v1.1) 25% 概率冒泡（拖动是高频小动作，不要每次都吐槽）
+    if rand_unit() < 0.25 {
+        if let Some(speech) = SPEECH_CTRL.get() {
+            speech.notify(Scene::DragEnd);
+        }
+    }
     // 暂停巡游 1.2s（防拖完立即被 wander tick 推走）
     if companion.mood() == Mood::Wandering {
         companion.set(Mood::Stationary);
@@ -395,3 +473,192 @@ fn baseline_mood(state: &Arc<AppState>, companion: &Arc<CompanionState>) -> Mood
     }
 }
 
+/// (v1.1) 偷懒 0..1 浮点：基于 SystemTime nanos SplitMix64 一步。零依赖、
+/// 质量足够 25%/40%/70% 概率分支用。speech.rs 内有同款副本（不互相依赖）。
+fn rand_unit() -> f64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64 ^ d.as_secs())
+        .unwrap_or(0);
+    let mut z = nanos.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z = z ^ (z >> 31);
+    (z >> 11) as f64 / ((1u64 << 53) as f64)
+}
+
+// ---------- (v1.1) 鼠标 watcher ----------
+//
+// 30fps（实际 100ms / 10fps 节流）跨进程拿光标位置，跟 panel 中心算距离：
+//   ≤200px → 切 stationary 站定看着 + emit `companion-facing` { dir }
+//   >200px → 1s 后 emit `companion-baseline`（防抖）
+// 用 windows::Win32::UI::WindowsAndMessaging::GetCursorPos —— 不需要权限提升。
+
+#[cfg(windows)]
+fn spawn_mouse_watcher(
+    handle: AppHandle,
+    app_state: Arc<AppState>,
+    companion: Arc<CompanionState>,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let was_in_radius = Arc::new(AtomicBool::new(false));
+    let scheduled_baseline = Arc::new(AtomicBool::new(false));
+    tauri::async_runtime::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(MOUSE_WATCH_TICK_MS));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            // companion 关闭即 sleep 一会儿避免空转
+            if !app_state.config.read().companion_enabled {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                continue;
+            }
+            let mood = companion.mood();
+            if !matches!(mood, Mood::Wandering | Mood::Stationary) {
+                continue;
+            }
+            // pill 显示中不抢——让 ASR 状态优先
+            if !matches!(app_state.current_phase(), PipelinePhase::Idle) {
+                continue;
+            }
+            let Some(win) = handle.get_webview_window("companion") else {
+                continue;
+            };
+            let Ok(cur_pos) = win.outer_position() else {
+                continue;
+            };
+            let Ok(Some(monitor)) = win.current_monitor() else {
+                continue;
+            };
+            let scale = monitor.scale_factor();
+            let panel_w_px = (PANEL_W * scale) as i32;
+            let panel_h_px = (PANEL_H * scale) as i32;
+            // sprite 中心约 panel 下半 30% 处（跟 Mac processMouse 同）
+            let sprite_cx = cur_pos.x + panel_w_px / 2;
+            let sprite_cy = cur_pos.y + (panel_h_px as f64 * 0.7) as i32;
+
+            let Some((cx, cy)) = current_cursor_pos() else {
+                continue;
+            };
+            let dx = (cx - sprite_cx) as f64;
+            let dy = (cy - sprite_cy) as f64;
+            let dist_px = (dx * dx + dy * dy).sqrt();
+            let radius_px = MOUSE_LOOK_RADIUS * scale;
+
+            if dist_px <= radius_px {
+                // 鼠标靠近：切 stationary 让宠物站定 + emit facing
+                scheduled_baseline.store(false, Ordering::SeqCst);
+                if mood == Mood::Wandering {
+                    companion.set(Mood::Stationary);
+                    emit_state(&handle, &companion);
+                }
+                let dir = if dx >= 0.0 { Facing::Right } else { Facing::Left };
+                if companion.facing() != dir {
+                    let mut f = companion.facing.write();
+                    *f = dir;
+                    drop(f);
+                    emit_state(&handle, &companion);
+                }
+                let _ = handle.emit(
+                    "companion-facing",
+                    &serde_json::json!({ "dir": match dir { Facing::Left => "left", Facing::Right => "right" } }),
+                );
+                was_in_radius.store(true, Ordering::SeqCst);
+            } else if was_in_radius.load(Ordering::SeqCst) {
+                // 鼠标已远离 — 1s 后 emit baseline + 切回 user 意图（防抖动）
+                if !scheduled_baseline.swap(true, Ordering::SeqCst) {
+                    let h2 = handle.clone();
+                    let c2 = companion.clone();
+                    let s2 = app_state.clone();
+                    let was = was_in_radius.clone();
+                    let sched = scheduled_baseline.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(MOUSE_AWAY_RESUME_MS)).await;
+                        // 期间又靠近过 → 放弃
+                        if !sched.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        sched.store(false, Ordering::SeqCst);
+                        was.store(false, Ordering::SeqCst);
+                        if matches!(s2.current_phase(), PipelinePhase::Idle) {
+                            let want = if *c2.user_wants_wandering.read() {
+                                Mood::Wandering
+                            } else {
+                                Mood::Stationary
+                            };
+                            c2.set(want);
+                            emit_state(&h2, &c2);
+                        }
+                        let _ = h2.emit("companion-baseline", &serde_json::json!({}));
+                    });
+                }
+            }
+        }
+    });
+}
+
+#[cfg(windows)]
+fn current_cursor_pos() -> Option<(i32, i32)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut pt = POINT { x: 0, y: 0 };
+    unsafe {
+        if GetCursorPos(&mut pt).is_ok() {
+            Some((pt.x, pt.y))
+        } else {
+            None
+        }
+    }
+}
+
+// 非 Windows 平台 stub —— mac/linux 编译占位
+#[cfg(not(windows))]
+fn spawn_mouse_watcher(
+    _handle: AppHandle,
+    _app_state: Arc<AppState>,
+    _companion: Arc<CompanionState>,
+) {
+}
+
+// ---------- (v1.1) 设置开关 IPC ----------
+
+/// 总开关：让伴侣说话 on/off。关掉后立即清空气泡。
+#[tauri::command]
+pub async fn cmd_set_companion_voice_enabled(
+    enabled: bool,
+    state: tauri::State<'_, Arc<AppState>>,
+    handle: AppHandle,
+) -> Result<(), String> {
+    let mut cfg = state.config.read().clone();
+    cfg.companion_voice_enabled = enabled;
+    state
+        .replace_config(cfg)
+        .map_err(|e| format!("save config: {e}"))?;
+    if !enabled {
+        // 立即清气泡，跟 Mac clearImmediately 同
+        let _ = handle.emit(
+            "companion-speech",
+            &super::speech::SpeechPayload {
+                text: None,
+                dwell_ms: 0,
+            },
+        );
+    }
+    Ok(())
+}
+
+/// 频率 picker：少 / 中 / 多 = 1 / 2 / 3。idle interval 下次 sleep 自动应用新值。
+#[tauri::command]
+pub async fn cmd_set_companion_chattiness(
+    level: u8,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let level = level.clamp(0, 3);
+    let mut cfg = state.config.read().clone();
+    cfg.companion_chattiness = level;
+    state
+        .replace_config(cfg)
+        .map_err(|e| format!("save config: {e}"))?;
+    Ok(())
+}

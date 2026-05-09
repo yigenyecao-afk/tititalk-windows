@@ -134,6 +134,11 @@ pub struct AppConfig {
     /// 3=频繁。控制 PetBubble 的触发频次。
     #[serde(default = "default_companion_chattiness")]
     pub companion_chattiness: u8,
+    /// (v1.1 性格化陪伴) 让伴侣说话总开关。默认 true 跟 Mac
+    /// `companionVoiceEnabled` 同源；关掉后所有气泡入口直接 return，
+    /// idle/time/recording/petting 全部静音。
+    #[serde(default = "yes")]
+    pub companion_voice_enabled: bool,
     /// (P0-4 跨端对齐 2026-05-06) 录音浮窗 pill 显示开关，跟 Mac
     /// `floatingPillEnabled` 默认 false 对齐——之前 Win 端常显，跨端体验割裂。
     /// 关闭时 pill webview 永不展示；用户在设置里勾上才显示。
@@ -240,6 +245,7 @@ impl Default for AppConfig {
             companion_enabled: false,
             companion_pet_slug: default_companion_slug(),
             companion_chattiness: default_companion_chattiness(),
+            companion_voice_enabled: true,
             pill_enabled: false,
             telemetry_app_context_enabled: true,
             onboarding_completed: false,

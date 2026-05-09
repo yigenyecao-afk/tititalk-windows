@@ -32,6 +32,11 @@ export async function doubleTap(): Promise<void> {
   await invoke("cmd_companion_double_tap");
 }
 
+/// (v1.1 性格化陪伴) 长按 ≥0.5s → 抚摸（wave 1.5s + 70% 概率冒泡）。
+export async function longPress(): Promise<void> {
+  await invoke("cmd_companion_long_press");
+}
+
 export async function dragEnd(): Promise<void> {
   await invoke("cmd_companion_drag_end");
 }

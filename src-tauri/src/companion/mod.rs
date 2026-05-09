@@ -17,3 +17,9 @@
 pub mod catalog;
 pub mod state;
 pub mod window;
+
+// (v1.1 性格化陪伴) 文案库 / 触发逻辑 / 应用感知 watcher
+pub mod personality;
+pub mod speech;
+#[cfg(windows)]
+pub mod app_watcher;

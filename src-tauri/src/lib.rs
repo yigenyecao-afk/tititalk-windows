@@ -187,6 +187,10 @@ pub fn run() {
             companion::window::cmd_companion_double_tap,
             companion::window::cmd_companion_drag_end,
             companion::window::cmd_companion_save_position,
+            // (v1.1 性格化陪伴) 长按抚摸 + 总开关 + 频率 picker
+            companion::window::cmd_companion_long_press,
+            companion::window::cmd_set_companion_voice_enabled,
+            companion::window::cmd_set_companion_chattiness,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
