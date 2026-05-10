@@ -191,6 +191,7 @@ pub fn run() {
             companion::window::cmd_companion_long_press,
             companion::window::cmd_set_companion_voice_enabled,
             companion::window::cmd_set_companion_chattiness,
+            companion::window::cmd_set_companion_pet_name,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

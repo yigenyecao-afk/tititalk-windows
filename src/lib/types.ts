@@ -60,6 +60,9 @@ export interface AppConfig {
   companion_chattiness: 0 | 1 | 2 | 3;
   /// (v1.1 性格化陪伴) 让伴侣说话总开关，默认 true 跟 Mac companionVoiceEnabled 同源。
   companion_voice_enabled: boolean;
+  /// (v0.16.2 B1 起名) 用户给宠物起的昵称。空 = 用宠物本名；非空 → display 时
+  /// 低概率（15%）以"<name>～"前缀注入文案。跟 Mac companionPetName 同源。
+  companion_pet_name: string;
   /// (P0-4 跨端对齐) 录音浮窗 pill 显示开关，跟 Mac floatingPillEnabled 默认 false 对齐。
   pill_enabled: boolean;
   /// (P2-30 隐私) 前台 app 上下文遥测 opt-out。默认 ON 跟旧行为兼容。

@@ -404,10 +404,26 @@ impl SpeechController {
             }
             *last = Some(Instant::now());
         }
-        log::info!("[companion-speech] display: {line}");
+
+        // (v0.16.2 B1 起名) 用户起了名 + 15% 概率 + 短句 ≤12 chars → 前缀
+        // 注入 "<name>～"。概率压低保留克制感；前缀只影响输出 line，不影响
+        // recently_shown 去重池（基于原 line key）。
+        let mut output = line;
+        let name = self
+            .app_state
+            .config
+            .read()
+            .companion_pet_name
+            .trim()
+            .to_string();
+        if !name.is_empty() && output.chars().count() <= 12 && rand_unit() < 0.15 {
+            output = format!("{name}～{output}");
+        }
+
+        log::info!("[companion-speech] display: {output}");
 
         // 字数自适应停留 3-6s（约 0.18s/字 + 2.5s 起步）
-        let chars = line.chars().count() as f64;
+        let chars = output.chars().count() as f64;
         let dwell = (2.5 + chars * 0.18).clamp(3.0, 6.0);
         let dwell_ms = (dwell * 1000.0) as u32;
 
@@ -417,11 +433,11 @@ impl SpeechController {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
             + 1;
 
-        *self.current_speech.lock() = Some(line.clone());
+        *self.current_speech.lock() = Some(output.clone());
         let _ = self.handle.emit(
             "companion-speech",
             &SpeechPayload {
-                text: Some(line),
+                text: Some(output),
                 dwell_ms,
             },
         );
@@ -481,6 +497,23 @@ pub fn classify_app(exe_lower: &str) -> Option<AppCtx> {
         "windowsterminal",
         "wt",
     ];
+    // (v0.16.2) leisure 类：娱乐/视频/音乐/游戏。Win 用户多半浏览器看 B 站，
+    // 后端拿不到 url，所以 leisure 主要靠桌面 app exe basename 命中。优先级
+    // 高于 IM/Code（按 leisure → im → code 顺序），避免 keyword 撞名。
+    const LEISURE_KEYS: &[&str] = &[
+        "bilibili",
+        "cloudmusic",  // 网易云 PC
+        "qqmusic",
+        "wemusic",
+        "iqiyi",
+        "youku",
+        "spotify",
+        "netflix",
+        "steam",
+    ];
+    if LEISURE_KEYS.iter().any(|k| exe_lower.contains(k)) {
+        return Some(AppCtx::Leisure);
+    }
     if IM_KEYS.iter().any(|k| exe_lower.contains(k)) {
         return Some(AppCtx::Im);
     }

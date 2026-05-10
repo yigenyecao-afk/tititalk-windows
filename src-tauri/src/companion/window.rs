@@ -662,3 +662,20 @@ pub async fn cmd_set_companion_chattiness(
         .map_err(|e| format!("save config: {e}"))?;
     Ok(())
 }
+
+/// (v0.16.2 B1 起名) 写昵称——空字符串 = 清空（恢复"用本名"）。
+/// trim 处理首尾空白；保存到 cfg.companion_pet_name；speech.rs display() 路径
+/// 实时读取，不需 reload speech controller。
+#[tauri::command]
+pub async fn cmd_set_companion_pet_name(
+    name: String,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let trimmed = name.trim().to_string();
+    let mut cfg = state.config.read().clone();
+    cfg.companion_pet_name = trimmed;
+    state
+        .replace_config(cfg)
+        .map_err(|e| format!("save config: {e}"))?;
+    Ok(())
+}

@@ -139,6 +139,10 @@ pub struct AppConfig {
     /// idle/time/recording/petting 全部静音。
     #[serde(default = "yes")]
     pub companion_voice_enabled: bool,
+    /// (v0.16.2 B1 起名) 用户给宠物起的昵称。空 = 用宠物本名；非空 → display
+    /// 时低概率（15%）以"<name>～"前缀注入文案，让陪伴更有专属感。
+    #[serde(default)]
+    pub companion_pet_name: String,
     /// (P0-4 跨端对齐 2026-05-06) 录音浮窗 pill 显示开关，跟 Mac
     /// `floatingPillEnabled` 默认 false 对齐——之前 Win 端常显，跨端体验割裂。
     /// 关闭时 pill webview 永不展示；用户在设置里勾上才显示。
@@ -246,6 +250,7 @@ impl Default for AppConfig {
             companion_pet_slug: default_companion_slug(),
             companion_chattiness: default_companion_chattiness(),
             companion_voice_enabled: true,
+            companion_pet_name: String::new(),
             pill_enabled: false,
             telemetry_app_context_enabled: true,
             onboarding_completed: false,

@@ -56,6 +56,8 @@ pub enum AppCtx {
     Im,
     /// VSCode / Cursor / JetBrains 等编辑器
     Code,
+    /// (v0.16.2) B 站 / YouTube / 网易云 / Spotify / 微博 / 知乎 / 小红书 等娱乐类
+    Leisure,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -194,6 +196,11 @@ fn lulu_lines(scene: Scene) -> &'static [&'static str] {
             "一行一行慢慢来",
             "卡住了就泡杯茶",
         ],
+        Scene::AppContext(AppCtx::Leisure) => &[
+            "也想躺着看一会儿…",
+            "这个挺治愈呢",
+            "歇会儿挺好的呀",
+        ],
         Scene::BreakSuggestion => &[
             "歇歇眼睛吧主人",
             "站起来转一圈嘛",
@@ -302,6 +309,11 @@ fn aka_shiba_lines(scene: Scene) -> &'static [&'static str] {
             "码起来！能行的！",
             "主人键盘最棒！",
             "今天也是高产日！",
+        ],
+        Scene::AppContext(AppCtx::Leisure) => &[
+            "主人在摸鱼噢！",
+            "我陪你一起看好不好",
+            "歇歇眼睛玩会儿吧！",
         ],
         Scene::BreakSuggestion => &[
             "歇歇！跟我跑两圈！",
@@ -412,6 +424,11 @@ fn byte_bunny_lines(scene: Scene) -> &'static [&'static str] {
             "git pull 一下？",
             "IDE ready ✓",
         ],
+        Scene::AppContext(AppCtx::Leisure) => &[
+            "offline mode +1",
+            "productivity = 0% 哈哈",
+            "这也算 break time ✓",
+        ],
         Scene::BreakSuggestion => &[
             "pomodoro 到点啦",
             "pause();",
@@ -515,6 +532,11 @@ fn pixel_panda_lines(scene: Scene) -> &'static [&'static str] {
             "回完吃东西！",
             "先回复后吃饭",
             "消息！吃！",
+        ],
+        Scene::AppContext(AppCtx::Leisure) => &[
+            "看视频要配竹子哦",
+            "想跟主人一起吃东西",
+            "滚一会儿好不好嘛～",
         ],
         Scene::AppContext(AppCtx::Code) => &[
             "码完一段就吃",
@@ -629,6 +651,11 @@ fn boba_lines(scene: Scene) -> &'static [&'static str] {
             "码字辛苦～",
             "敲键盘也很甜呀",
             "主人最棒了✨",
+        ],
+        Scene::AppContext(AppCtx::Leisure) => &[
+            "歇歇眼睛嘛～",
+            "一起追剧好不好",
+            "看完这个再写吧～",
         ],
         Scene::BreakSuggestion => &[
             "歇歇～抱抱～",

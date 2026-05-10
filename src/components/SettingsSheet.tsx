@@ -679,6 +679,24 @@ export default function SettingsSheet({
                 }
               />
             )}
+            {/* (v0.16.2 B1) 给 Ta 起名 — 起名后 ~15% 短句气泡前缀带名字 */}
+            {draft.companion_enabled && draft.companion_voice_enabled && (
+              <TypelessRow
+                iconNode={<Icon name="info" />}
+                iconColor="#EF4444"
+                title="给 Ta 起个名"
+                subtitle="起名后偶尔气泡前会带上 Ta 的名字（留空就用本名）"
+                trailing={
+                  <input
+                    type="text"
+                    value={draft.companion_pet_name ?? ""}
+                    onChange={(e) => patch("companion_pet_name", e.target.value)}
+                    className="w-32 px-2 py-1 text-xs border border-ink-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-ink-900"
+                    maxLength={12}
+                  />
+                }
+              />
+            )}
           </TypelessCard>
         </section>
 
