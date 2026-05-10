@@ -79,6 +79,8 @@ pub enum Scene {
     Launch,
     /// 抚摸（鼠标按住宠物 ≥0.5s）
     Petting,
+    /// (v0.16.2 B4) 持续按住 ≥2.5s = 深度抚摸，比 Petting 更亲密
+    DeepPet,
     AppContext(AppCtx),
     /// 连续工作过久 → 提醒休息
     BreakSuggestion,
@@ -185,6 +187,11 @@ fn lulu_lines(scene: Scene) -> &'static [&'static str] {
             "软软的我…",
             "咕…要睡着啦",
             "主人手好暖",
+        ],
+        Scene::DeepPet => &[
+            "真的睡着了…",
+            "你也躺下来嘛",
+            "我们一直这样吧…",
         ],
         Scene::AppContext(AppCtx::Im) => &[
             "消息嘛，慢慢来",
@@ -300,6 +307,11 @@ fn aka_shiba_lines(scene: Scene) -> &'static [&'static str] {
             "汪汪汪～",
             "尾巴停不下来啦！",
         ],
+        Scene::DeepPet => &[
+            "主人是世界第一好！",
+            "我永远跟着主人！",
+            "可以一直摸下去嘛！",
+        ],
         Scene::AppContext(AppCtx::Im) => &[
             "快去回！加油！",
             "消息！冲！",
@@ -413,6 +425,11 @@ fn byte_bunny_lines(scene: Scene) -> &'static [&'static str] {
             "purr_thread spawned",
             "detected: pat",
             "running affection.exe",
+        ],
+        Scene::DeepPet => &[
+            "session unlocked",
+            "trust++",
+            "deep_bond mode on",
         ],
         Scene::AppContext(AppCtx::Im) => &[
             "inbox != 0 ⚠️",
@@ -528,6 +545,11 @@ fn pixel_panda_lines(scene: Scene) -> &'static [&'static str] {
             "主人手暖暖",
             "呼噜呼噜～",
         ],
+        Scene::DeepPet => &[
+            "肚子最喜欢这样～",
+            "我把竹子分你哦",
+            "再摸主人就最棒",
+        ],
         Scene::AppContext(AppCtx::Im) => &[
             "回完吃东西！",
             "先回复后吃饭",
@@ -641,6 +663,11 @@ fn boba_lines(scene: Scene) -> &'static [&'static str] {
             "软软的呀我",
             "最喜欢这个了～",
             "主人手好甜",
+        ],
+        Scene::DeepPet => &[
+            "我们就一直这样～",
+            "主人最喜欢谁呀",
+            "我也最喜欢主人✨",
         ],
         Scene::AppContext(AppCtx::Im) => &[
             "快去回～甜甜回",

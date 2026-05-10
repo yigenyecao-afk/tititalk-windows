@@ -192,6 +192,8 @@ pub fn run() {
             companion::window::cmd_set_companion_voice_enabled,
             companion::window::cmd_set_companion_chattiness,
             companion::window::cmd_set_companion_pet_name,
+            // (v0.16.2 B4) 深度抚摸 — 持续按 ≥2.5s 触发
+            companion::window::cmd_companion_deep_press,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -404,6 +406,20 @@ pub fn run() {
                 if window.label() == "main" {
                     let _ = window.hide();
                     api.prevent_close();
+                }
+            }
+            // (v0.16.2 B2 离场归来) main window focus state → SpeechController
+            // 记 last_blurred / 检查 elapsed ≥30min 强冒 launch 招呼。其他
+            // window (pill / companion / pet) focus 切换不触发，避免误判。
+            if let tauri::WindowEvent::Focused(focused) = event {
+                if window.label() == "main" {
+                    if let Some(speech) = companion::window::get_speech_ctrl() {
+                        if *focused {
+                            speech.on_focused();
+                        } else {
+                            speech.on_blurred();
+                        }
+                    }
                 }
             }
         })

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
+  deepPress,
   doubleTap,
   dragEnd,
   listPets,
@@ -147,6 +148,7 @@ export default function CompanionApp() {
         onTap={() => void tap()}
         onDoubleTap={() => void doubleTap()}
         onLongPress={() => void longPress()}
+        onDeepPress={() => void deepPress()}
         onDragStart={onDragStart}
       />
     </div>

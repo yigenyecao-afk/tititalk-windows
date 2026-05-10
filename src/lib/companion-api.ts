@@ -37,6 +37,11 @@ export async function longPress(): Promise<void> {
   await invoke("cmd_companion_long_press");
 }
 
+/// (v0.16.2 B4) 持续按 ≥2.5s → 深度抚摸（wave 2.5s + 100% 概率冒"deep pet"）。
+export async function deepPress(): Promise<void> {
+  await invoke("cmd_companion_deep_press");
+}
+
 export async function dragEnd(): Promise<void> {
   await invoke("cmd_companion_drag_end");
 }

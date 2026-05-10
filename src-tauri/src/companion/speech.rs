@@ -68,6 +68,7 @@ fn scene_key(s: &Scene) -> String {
         Scene::RecordingError => "err".to_string(),
         Scene::Launch => "launch".to_string(),
         Scene::Petting => "pet".to_string(),
+        Scene::DeepPet => "deeppet".to_string(),
         Scene::AppContext(c) => format!("ac-{:?}", c),
         Scene::BreakSuggestion => "break".to_string(),
     }
@@ -102,6 +103,9 @@ pub struct SpeechController {
     last_time_slot: Mutex<Option<TimeSlot>>,
     /// 当前 hide task token —— bump 后旧 hide task 放弃
     hide_token: std::sync::atomic::AtomicU64,
+    /// (v0.16.2 B2) main window blur 时刻——focus 时检查 elapsed ≥30min
+    /// 强冒 launch 招呼。短切（10s 内）不触发。
+    last_blurred_at: Mutex<Option<Instant>>,
 }
 
 impl SpeechController {
@@ -120,6 +124,7 @@ impl SpeechController {
             last_phase: Mutex::new(None),
             last_time_slot: Mutex::new(None),
             hide_token: std::sync::atomic::AtomicU64::new(0),
+            last_blurred_at: Mutex::new(None),
         });
         // 启动 idle tick
         Self::spawn_idle_tick(me.clone());
@@ -296,6 +301,25 @@ impl SpeechController {
         match *self.last_break_at.lock() {
             Some(t) => t.elapsed() > BREAK_MIN_GAP,
             None => true,
+        }
+    }
+
+    /// (v0.16.2 B2 离场归来) main window 失焦——记 timestamp。
+    pub fn on_blurred(self: &Arc<Self>) {
+        *self.last_blurred_at.lock() = Some(Instant::now());
+    }
+
+    /// (v0.16.2 B2 离场归来) main window 重新获得焦点——如果离场 ≥30min，
+    /// 强冒一句 launch 招呼欢迎用户回来。短切（开 finder 一秒回来）不触发。
+    pub fn on_focused(self: &Arc<Self>) {
+        let blurred = self.last_blurred_at.lock().take();
+        if let Some(t) = blurred {
+            if t.elapsed() >= Duration::from_secs(30 * 60) {
+                log::info!(
+                    "[companion-speech] returning from away ≥30min, force launch greeting"
+                );
+                self.notify(Scene::Launch);
+            }
         }
     }
 

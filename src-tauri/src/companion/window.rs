@@ -60,6 +60,13 @@ static COMPANION_STATE: OnceCell<Arc<CompanionState>> = OnceCell::const_new();
 /// (v1.1) 性格化文案 controller 单例。同 COMPANION_STATE 全局唯一。
 static SPEECH_CTRL: OnceCell<Arc<SpeechController>> = OnceCell::const_new();
 
+/// (v0.16.2 B2) 暴露 SpeechController 给 lib.rs on_window_event 用——
+/// main window focus 切换时调 on_focused / on_blurred。返 Arc clone 让
+/// 调用方 own，不持 OnceCell ref（避免生命周期纠葛）。
+pub fn get_speech_ctrl() -> Option<Arc<SpeechController>> {
+    SPEECH_CTRL.get().cloned()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct PersistedOrigin {
     x: i32,
@@ -381,6 +388,29 @@ pub fn cmd_companion_long_press(handle: AppHandle, state: tauri::State<'_, Arc<A
     let c2 = companion.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(1500 + 30)).await;
+        emit_state(&h2, &c2);
+    });
+}
+
+/// (v0.16.2 B4) 持续按 pet ≥2.5s → 深度抚摸；wave 2.5s + 100% 概率说
+/// "deep pet"。比 long_press 更亲密，发生频率更低（要按 2.5s 才触发）
+/// 所以高概率不会唠叨。前端 PetView 在 onMouseDown 启 2.5s timer，
+/// 触发时调本命令。
+#[tauri::command]
+pub fn cmd_companion_deep_press(handle: AppHandle, state: tauri::State<'_, Arc<AppState>>) {
+    let Some(companion) = COMPANION_STATE.get().cloned() else {
+        return;
+    };
+    let fallback = baseline_mood(&state, &companion);
+    companion.trigger(Mood::Wave, Duration::from_millis(2500), fallback);
+    emit_state(&handle, &companion);
+    if let Some(speech) = SPEECH_CTRL.get() {
+        speech.notify(Scene::DeepPet);
+    }
+    let h2 = handle.clone();
+    let c2 = companion.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(2500 + 30)).await;
         emit_state(&h2, &c2);
     });
 }

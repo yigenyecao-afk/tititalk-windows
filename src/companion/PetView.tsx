@@ -107,6 +107,7 @@ export function PetView({
   onTap,
   onDoubleTap,
   onLongPress,
+  onDeepPress,
   onDragStart,
 }: {
   companion: CompanionState;
@@ -115,6 +116,8 @@ export function PetView({
   onTap: () => void;
   onDoubleTap: () => void;
   onLongPress: () => void;
+  /// (v0.16.2 B4) 持续按住 ≥2.5s → 深度抚摸
+  onDeepPress: () => void;
   onDragStart: (e: React.MouseEvent) => void;
 }) {
   const state = mapState(companion, phase);
@@ -262,6 +265,9 @@ export function PetView({
   // 注意：拖动跟 long-press 互斥——按住不动 0.5s 算抚摸；按住有 delta 算拖。
   //       250ms tap-detector 跟 mousedown 流程独立，互不干扰。
   const longPressTimer = useRef<number | null>(null);
+  // (v0.16.2 B4) 第二档「深度抚摸」timer——持续按 2.5s 触发，比 0.5s long-press
+  // 更亲密的反应；拖动检测到 / 松手时一并取消。
+  const deepPressTimer = useRef<number | null>(null);
   const clickTimer = useRef<number | null>(null);
   const dragInfo = useRef<{ startX: number; startY: number; moved: boolean }>({
     startX: 0,
@@ -273,6 +279,10 @@ export function PetView({
     if (longPressTimer.current !== null) {
       window.clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
+    }
+    if (deepPressTimer.current !== null) {
+      window.clearTimeout(deepPressTimer.current);
+      deepPressTimer.current = null;
     }
   };
 
@@ -291,6 +301,16 @@ export function PetView({
         dragInfo.current.moved = true;
       }
     }, 500);
+    // (v0.16.2 B4) 启动第二档「深度抚摸」timer——持续按 2.5s 自动 fire；
+    // 不影响 0.5s short-press 路径，即用户先 short pet 再继续按到 2.5s
+    // 也会另外得到一次 deep pet 反馈。能 fire 到 2.5s 就证明既没拖也没
+    // 松手（onMove >4px 跟 onUp 都会 cancelLongPress 顺手清掉本 timer），
+    // 所以这里不再查 dragInfo.current.moved（那个被 long-press fire 改成
+    // true 不是"真拖动"含义）。
+    deepPressTimer.current = window.setTimeout(() => {
+      deepPressTimer.current = null;
+      onDeepPress();
+    }, 2500);
 
     // 把拖动事件交给父组件——父组件管 outerPosition 计算 + cmd_companion_save_position
     onDragStart(e);
