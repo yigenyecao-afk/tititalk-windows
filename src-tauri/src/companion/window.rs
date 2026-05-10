@@ -55,6 +55,14 @@ const WAVE_MS: u64 = 700;
 /// pill 隐藏后回 wandering 的延迟
 const RESUME_WANDER_DELAY_MS: u64 = 1200;
 
+/// (v0.16.2 B5 屏边探头) 撞墙时不立即 flip，先「探头」: panel 偏出屏边
+/// PEEK_OFFSET_RATIO 倍 panel 宽，hold PEEK_HOLD_SEC 后 flip + 退回。
+const PEEK_OFFSET_RATIO: f64 = 0.30;
+const PEEK_HOLD_SEC: u64 = 2;
+/// peek 期间 wander tick 跳过推位置；用 AtomicBool 在多 tokio task 间共享
+/// （wander tick + peek-reset task 都要读写）。
+static IS_PEEKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// 单例 —— ensure 只跑一次（多次 setup 调或 hot-reload 时复用同一份 state）。
 static COMPANION_STATE: OnceCell<Arc<CompanionState>> = OnceCell::const_new();
 /// (v1.1) 性格化文案 controller 单例。同 COMPANION_STATE 全局唯一。
@@ -231,6 +239,10 @@ fn spawn_wander_tick(handle: AppHandle, app_state: Arc<AppState>, companion: Arc
             if companion.mood() != Mood::Wandering {
                 continue;
             }
+            // (B5) peek 期间 panel 已偏出屏边，wander tick 不再推位置
+            if IS_PEEKING.load(std::sync::atomic::Ordering::Relaxed) {
+                continue;
+            }
 
             let Some(win) = handle.get_webview_window("companion") else {
                 continue;
@@ -255,24 +267,66 @@ fn spawn_wander_tick(handle: AppHandle, app_state: Arc<AppState>, companion: Arc
 
             let min_x = mp.x;
             let max_x = mp.x + ms.width as i32 - panel_w_px;
+            // (B5) 撞墙不立即 flip——进入 peek 模式（panel 偏出屏边 30% + 切
+            // Stationary + 启 2s reset task）。Mac 同步实现。
             if new_x <= min_x {
-                new_x = min_x;
-                if companion.facing() == Facing::Left {
-                    companion.flip_facing();
-                    emit_state(&handle, &companion);
-                }
+                enter_peek(handle.clone(), companion.clone(), min_x, new_y, panel_w_px, true);
+                continue;
             } else if new_x >= max_x {
-                new_x = max_x;
-                if companion.facing() == Facing::Right {
-                    companion.flip_facing();
-                    emit_state(&handle, &companion);
-                }
+                enter_peek(handle.clone(), companion.clone(), max_x, new_y, panel_w_px, false);
+                continue;
             }
 
             if new_x != cur.x || new_y != cur.y {
                 let _ = win.set_position(PhysicalPosition::new(new_x, new_y));
             }
         }
+    });
+}
+
+/// (v0.16.2 B5 屏边探头) 进入 peek: panel 偏出屏边 30% panel 宽，sprite 视觉
+/// 上半身露出屏外；切 Stationary 让前端 PetView 切回 idle row（不再跑步）。
+/// PEEK_HOLD_SEC 后自动 exit_peek（flip + 退回 + 恢复 Wandering）。
+fn enter_peek(
+    handle: AppHandle,
+    companion: Arc<CompanionState>,
+    edge_x: i32,
+    y: i32,
+    panel_w_px: i32,
+    toward_left: bool,
+) {
+    if IS_PEEKING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return; // 已在 peek 中
+    }
+    let offset_px = (panel_w_px as f64 * PEEK_OFFSET_RATIO) as i32;
+    let peeked_x = if toward_left { edge_x - offset_px } else { edge_x + offset_px };
+
+    if let Some(win) = handle.get_webview_window("companion") {
+        let _ = win.set_position(PhysicalPosition::new(peeked_x, y));
+    }
+    companion.set(Mood::Stationary);
+    emit_state(&handle, &companion);
+
+    let h2 = handle.clone();
+    let c2 = companion.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(PEEK_HOLD_SEC)).await;
+        // 退回 baseline edge_x + flip facing
+        if let Some(win) = h2.get_webview_window("companion") {
+            let _ = win.set_position(PhysicalPosition::new(edge_x, y));
+        }
+        let need_flip = (toward_left && c2.facing() == Facing::Left)
+            || (!toward_left && c2.facing() == Facing::Right);
+        if need_flip {
+            c2.flip_facing();
+        }
+        // 用户拖动 / pill 显示中可能切了别的 mood，只在仍 Stationary +
+        // 用户意图巡游时回 Wandering
+        if c2.mood() == Mood::Stationary && *c2.user_wants_wandering.read() {
+            c2.set(Mood::Wandering);
+        }
+        IS_PEEKING.store(false, std::sync::atomic::Ordering::SeqCst);
+        emit_state(&h2, &c2);
     });
 }
 
